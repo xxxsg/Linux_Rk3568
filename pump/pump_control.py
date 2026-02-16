@@ -60,24 +60,47 @@ try:
     print("GPIO 初始化完成，电机已使能。")
     time.sleep(0.5)
 
-    # 4. 开始发送脉冲
+    # 4. 开始发送脉冲 - 先正转3秒，停3秒，再反转3秒
+    print("开始正转...")
+        
+    # 正转3秒
     start_time = time.time()
-    pulse_count = 0
-    
-    print(f"开始旋转 ({TARGET_RPM} RPM)...")
-
-    while (time.time() - start_time) < RUN_TIME_SEC:
+    pulse_count_forward = 0
+    while (time.time() - start_time) < 3.0:
         # 产生方波
         line_pul.set_value(1)
         time.sleep(HALF_PERIOD)
-        
+            
         line_pul.set_value(0)
         time.sleep(HALF_PERIOD)
+            
+        pulse_count_forward += 1
         
-        pulse_count += 1
-
-    print(f"停止旋转。总脉冲数: {pulse_count}")
-    
+    print(f"正转完成。脉冲数: {pulse_count_forward}")
+        
+    # 停止3秒
+    print("电机停止中...")
+    line_ena.set_value(1)  # 禁用电机
+    time.sleep(3.0)
+    line_ena.set_value(0)  # 重新使能电机
+        
+    # 反转3秒
+    print("开始反转...")
+    line_dir.set_value(0)  # 设置为反转方向
+    start_time = time.time()
+    pulse_count_backward = 0
+    while (time.time() - start_time) < 3.0:
+        # 产生方波
+        line_pul.set_value(1)
+        time.sleep(HALF_PERIOD)
+            
+        line_pul.set_value(0)
+        time.sleep(HALF_PERIOD)
+            
+        pulse_count_backward += 1
+        
+    print(f"反转完成。脉冲数: {pulse_count_backward}")
+        
     # 5. 禁用电机 (高电平禁用)
     line_ena.set_value(1)
     print("电机已禁用。")
