@@ -1,0 +1,71 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>LED 控制</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 2rem; }
+    button { font-size: 1rem; padding: 0.6rem 1.2rem; margin: 0.5rem; }
+    .state { font-weight: bold; }
+    .led-group { 
+      margin: 1rem 0; 
+      padding: 1rem; 
+      border: 1px solid #ddd; 
+      border-radius: 4px; 
+    }
+    .api-info { margin-top: 2rem; padding: 1rem; background-color: #f5f5f5; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>双 LED 控制</h1>
+  
+  <div class="led-group">
+    <h2>LED 1 (GPIO {{ led1_state }})</h2>
+    <p>当前状态：<span class="state">{{ 'ON' if led1_state else 'OFF' }}</span></p>
+    
+    <form action="/on1" method="post">
+      <button type="submit" id="on1-btn">打开 LED 1</button>
+    </form>
+    
+    <form action="/off1" method="post">
+      <button type="submit" id="off1-btn">关闭 LED 1</button>
+    </form>
+    
+    <form action="/toggle1" method="post">
+      <button type="submit" id="toggle1-btn">切换 LED 1</button>
+    </form>
+  </div>
+
+  <div class="led-group">
+    <h2>LED 2 (GPIO {{ led2_state }})</h2>
+    <p>当前状态：<span class="state">{{ 'ON' if led2_state else 'OFF' }}</span></p>
+    
+    <form action="/on2" method="post">
+      <button type="submit" id="on2-btn">打开 LED 2</button>
+    </form>
+    
+    <form action="/off2" method="post">
+      <button type="submit" id="off2-btn">关闭 LED 2</button>
+    </form>
+    
+    <form action="/toggle2" method="post">
+      <button type="submit" id="toggle2-btn">切换 LED 2</button>
+    </form>
+  </div>
+
+  <div class="api-info">
+    <h3>API 接口</h3>
+    <p><strong>GET /status</strong> - 获取当前LED状态</p>
+    <p><strong>POST /on1</strong> - 打开LED 1</p>
+    <p><strong>POST /off1</strong> - 关闭LED 1</p>
+    <p><strong>POST /toggle1</strong> - 切换LED 1状态</p>
+    <p><strong>POST /on2</strong> - 打开LED 2</p>
+    <p><strong>POST /off2</strong> - 关闭LED 2</p>
+    <p><strong>POST /toggle2</strong> - 切换LED 2状态</p>
+  </div>
+  
+  <script>
+    // 可以在这里添加JavaScript用于异步控制
+  </script>
+</body>
+</html>
