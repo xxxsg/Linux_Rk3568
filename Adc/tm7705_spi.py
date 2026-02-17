@@ -15,13 +15,16 @@ LINE_DOUT = 4    # DOUT 接 chip3 的 4 号引脚
 LINE_DRDY = 3    # DRDY 接 chip3 的 3 号引脚
 
 # SPI配置参数
-SPI_CLOCK_FREQ_HZ = 1000000  # SPI时钟频率 1MHz (可根据TM7705规格调整)
+SPI_CLOCK_FREQ_HZ = 1000000  # SPI时钟频率 1MHz
 SPI_CLOCK_PERIOD_SEC = 1.0 / SPI_CLOCK_FREQ_HZ
 SPI_HALF_PERIOD = SPI_CLOCK_PERIOD_SEC / 2.0
 
+# TM7705固定参数
+VREF = 2.5  # 参考电压固定为2.5V (不可配置)
+
 print(f"--- TM7705 ADC 控制启动 (gpiod 1.x) ---")
 print(f"SPI时钟频率: {SPI_CLOCK_FREQ_HZ} Hz")
-print(f"SPI时钟周期: {SPI_CLOCK_PERIOD_SEC:.6f} 秒")
+print(f"参考电压: {VREF} V")
 print("----------------------------------")
 
 # 全局变量
@@ -32,6 +35,10 @@ line_din = None
 line_sck = None
 line_dout = None
 line_drdy = None
+
+# 当前增益设置
+current_gain = 1
+current_channel = 0
 
 def spi_init():
     """初始化SPI接口"""
@@ -122,109 +129,99 @@ def wait_for_ready(timeout_sec=1.0):
         time.sleep(0.001)  # 1ms间隔检查
     return False
 
-def read_tm7705_data():
-    """读取TM7705的转换数据 (16位)"""
-    try:
-        # 等待数据就绪
-        if not wait_for_ready():
-            print("超时：DRDY信号未变低")
-            return None
-            
-        # TM7705是16位ADC，读取16位数据
-        # 读取时序：先发送读命令(0x00)，然后读取2个字节
-        
-        # 发送读命令 (0x00)
-        spi_write_byte(0x00)
-        
-        # 读取16位数据 (2个字节)
-        high_byte = spi_read_byte()
-        low_byte = spi_read_byte()
-        
-        # 组合16位数据 (MSB first)
-        data_16bit = (high_byte << 8) | low_byte
-        
-        return data_16bit
-        
-    except Exception as e:
-        print(f"读取TM7705数据失败: {e}")
-        return None
-
-
-def read_tm7705_channel(channel=0):
-    """读取指定通道的数据
-    channel: 0 或 1 (TM7705有两个通道)
+def calculate_voltage_range(gain, unipolar=True):
     """
-    try:
-        # 等待数据就绪
-        if not wait_for_ready():
-            print("超时：DRDY信号未变低")
-            return None
-            
-        # 发送通道选择命令
-        # 通道0: 0x08 (读取通道0)
-        # 通道1: 0x09 (读取通道1)
-        command = 0x08 | (channel & 0x01)
-        spi_write_byte(command)
-        
-        # 读取16位数据
-        high_byte = spi_read_byte()
-        low_byte = spi_read_byte()
-        
-        # 组合16位数据
-        data_16bit = (high_byte << 8) | low_byte
-        
-        return data_16bit
-        
-    except Exception as e:
-        print(f"读取TM7705通道{channel}数据失败: {e}")
-        return None
-
-
-def tm7705_main():
-    """TM7705主测试函数"""
-    print("开始初始化TM7705...")
+    计算指定增益下的电压测量范围
+    返回: (min_volt, max_volt, description)
+    """
+    if unipolar:
+        # 单极性: 0 到 Vref/gain
+        min_volt = 0.0
+        max_volt = VREF / gain
+        desc = f"单极性: 0 ~ {max_volt:.3f}V"
+    else:
+        # 双极性: -Vref/gain 到 +Vref/gain
+        min_volt = -VREF / gain
+        max_volt = VREF / gain
+        desc = f"双极性: ±{max_volt:.3f}V"
     
-    if not spi_init():
-        print("SPI初始化失败，退出")
-        return
+    return min_volt, max_volt, desc
+
+def display_gain_options():
+    """显示增益选项及其对应的电压范围"""
+    print("\n=== TM7705 增益配置选项 ===")
+    print("请选择增益值 (参考电压: 2.5V):")
+    print("-" * 50)
     
-    try:
-        print("\n=== TM7705测试 ===")
-        
-        # 测试读取通道0
-        print("读取通道0数据...")
-        data_ch0 = read_tm7705_channel(0)
-        if data_ch0 is not None:
-            print(f"通道0数据: 0x{data_ch0:04X} ({data_ch0})")
+    gain_options = [1, 2, 4, 8, 16, 32, 64, 128]
+    
+    for i, gain in enumerate(gain_options, 1):
+        min_v, max_v, desc = calculate_voltage_range(gain, True)  # 默认单极性
+        print(f"{i:2d}. 增益 {gain:3d}x -> {desc}")
+    
+    print("-" * 50)
+
+def get_user_gain_selection():
+    """获取用户增益选择"""
+    gain_options = [1, 2, 4, 8, 16, 32, 64, 128]
+    
+    while True:
+        try:
+            display_gain_options()
+            choice = input("\n请输入选项 (1-8) 或输入 'q' 退出: ")
+            if choice.lower() == 'q':
+                sys.exit(0)
             
-        # 测试读取通道1
-        print("读取通道1数据...")
-        data_ch1 = read_tm7705_channel(1)
-        if data_ch1 is not None:
-            print(f"通道1数据: 0x{data_ch1:04X} ({data_ch1})")
-            
-        # 连续读取测试
-        print("\n连续读取测试 (10次):")
-        for i in range(10):
-            data = read_tm7705_data()
-            if data is not None:
-                print(f"第{i+1:2d}次: 0x{data:04X} ({data})")
-            time.sleep(0.5)
-            
-    except KeyboardInterrupt:
-        print("\n用户中断")
-        
-    finally:
-        # 释放资源
-        if line_cs: line_cs.release()
-        if line_din: line_din.release()
-        if line_sck: line_sck.release()
-        if line_dout: line_dout.release()
-        if line_drdy: line_drdy.release()
-        if chip_cs_din: chip_cs_din.close()
-        if chip_sck_dout_drdy: chip_sck_dout_drdy.close()
-        print("GPIO 资源已释放。")
+            choice_num = int(choice)
+            if 1 <= choice_num <= 8:
+                selected_gain = gain_options[choice_num - 1]
+                print(f"\n您选择了增益 {selected_gain}x")
+                return selected_gain
+            else:
+                print("请输入 1-8 之间的数字！")
+        except ValueError:
+            print("请输入有效的数字！")
+        except KeyboardInterrupt:
+            print("\n用户中断")
+            sys.exit(0)
 
 
-if __name__ == "__main__":
-    tm7705_main()
+def configure_tm7705(gain=1, channel=0, unipolar=True):
+    """
+    配置TM7705参数
+    gain: 1, 2, 4, 8, 16, 32, 64, 128
+    channel: 0 或 1
+    unipolar: True=单极性, False=双极性
+    """
+    global current_gain, current_channel
+    
+    # 计算增益位值 (0-7对应1-128倍)
+    gain_values = [1, 2, 4, 8, 16, 32, 64, 128]
+    gain_index = gain_values.index(gain) if gain in gain_values else 0
+    
+    # 配置寄存器格式 (根据AD7705/TM7705数据手册)
+    # 寄存器地址: 0x10 (配置寄存器)
+    # 格式: 1000 0000 | (gain<<4) | (channel<<2) | (unipolar<<1) | 0
+    # 实际值: 0x10 | (gain_index<<4) | (channel<<2) | (1 if unipolar else 0)
+    
+    config_high = 0x10 | (gain_index << 4) | (channel << 2) | (1 if unipolar else 0)
+    config_low = 0x00
+    
+    # 写入配置寄存器
+    spi_write_byte(0x10)  # 寄存器地址
+    spi_write_byte(config_high)  # 高字节
+    spi_write_byte(config_low)   # 低字节
+    
+    # 更新全局变量
+    current_gain = gain
+    current_channel = channel
+    
+    # 显示配置信息
+    min_v, max_v, desc = calculate_voltage_range(gain, unipolar)
+    print(f"TM7705配置完成:")
+    print(f"  增益: {gain}x")
+    print(f"  通道: {channel}")
+    print(f"  模式: {'单极性' if unipolar else '双极性'}")
+    print(f"  输入范围: {desc}")
+    
+    return True
