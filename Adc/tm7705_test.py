@@ -1,6 +1,8 @@
 import gpiod
 import time
 
+print("=== TM7705 ADC 测试程序 V2 (gpiod 1.x兼容版) ===")
+
 # === 配置参数 ===
 # 注意：请根据你的实际开发板文档，确认这些GPIO芯片名是否正确！
 # 例如，"gpiochip0" 是常见的芯片名，但你的板子可能是 "gpiochip4" 或其他。
@@ -50,45 +52,34 @@ drdy_line = None
 def initialize_gpio():
     """
     初始化所有用于与TM7705通信的GPIO引脚。
-    使用gpiod v1.4的API。
+    使用gpiod v1.x的API（与pump_control.py相同的写法）。
     """
     global cs_line, sclk_line, din_line, dout_line, drdy_line
     
     try:
-        # 获取并请求各个GPIO线路
-        # CS 和 DIN 在同一个芯片 (chip1)
-        chip_cs_din = gpiod.Chip(CHIP_NAME_CS)
+        # 1. 打开 GPIO 芯片 (使用完整设备路径，参照 pump_control.py)
+        chip_cs_din = gpiod.Chip(f"/dev/{CHIP_NAME_CS}")
+        chip_sclk_dout_drdy = gpiod.Chip(f"/dev/{CHIP_NAME_SCLK_DOUT_DRDY}")
+
+        # 2. 获取线路对象 (gpiod 1.x: get_line)
         cs_line = chip_cs_din.get_line(CS_PIN_OFFSET)
         din_line = chip_cs_din.get_line(DIN_PIN_OFFSET)
-
-        # SCK, DOUT, DRDY 在同一个芯片 (chip3)
-        chip_sclk_dout_drdy = gpiod.Chip(CHIP_NAME_SCLK_DOUT_DRDY)
         sclk_line = chip_sclk_dout_drdy.get_line(SCLK_PIN_OFFSET)
         dout_line = chip_sclk_dout_drdy.get_line(DOUT_PIN_OFFSET)
         drdy_line = chip_sclk_dout_drdy.get_line(DRDY_PIN_OFFSET)
 
-        # 配置CS, SCLK, DIN为输出，并设置初始电平
-        cs_req = gpiod.line_request()
-        cs_req.init_output(consumer="tm7705_cs", default_val=1)  # 初始高电平
-        cs_line.request(cs_req)
-
-        sclk_req = gpiod.line_request()
-        sclk_req.init_output(consumer="tm7705_sclk", default_val=0)  # 初始低电平
-        sclk_line.request(sclk_req)
-
-        din_req = gpiod.line_request()
-        din_req.init_output(consumer="tm7705_din", default_val=0)  # 初始低电平
-        din_line.request(din_req)
-
-        # 配置DOUT为输入
-        dout_req = gpiod.line_request()
-        dout_req.init_input(consumer="tm7705_dout")
-        dout_line.request(dout_req)
-
-        # 配置DRDY为输入
-        drdy_req = gpiod.line_request()
-        drdy_req.init_input(consumer="tm7705_drdy")
-        drdy_line.request(drdy_req)
+        # 3. 请求线路控制权 (gpiod 1.x: request)
+        # 参数说明: consumer(使用者名称), type(方向), default_vals(初始值列表)
+        # LINE_REQ_DIR_OUT = 1 (输出)
+        # LINE_REQ_DIR_IN = 0 (输入)
+        
+        cs_line.request(consumer="tm7705_cs", type=gpiod.LINE_REQ_DIR_OUT, default_vals=[1])  # 初始高电平
+        sclk_line.request(consumer="tm7705_sclk", type=gpiod.LINE_REQ_DIR_OUT, default_vals=[0])  # 初始低电平
+        din_line.request(consumer="tm7705_din", type=gpiod.LINE_REQ_DIR_OUT, default_vals=[0])  # 初始低电平
+        
+        # DOUT, DRDY 设置为输入
+        dout_line.request(consumer="tm7705_dout", type=gpiod.LINE_REQ_DIR_IN)
+        drdy_line.request(consumer="tm7705_drdy", type=gpiod.LINE_REQ_DIR_IN)
 
         print(f"✅ GPIO初始化成功!")
         print(f"   CS: {CHIP_NAME_CS}.{CS_PIN_OFFSET}, SCLK: {CHIP_NAME_SCLK_DOUT_DRDY}.{SCLK_PIN_OFFSET}")
