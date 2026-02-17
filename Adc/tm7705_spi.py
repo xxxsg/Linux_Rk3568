@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v1.8 - 完整TM7705增益配置交互版（完整SPI配置版）
+# Version: v2.0 - TM7705测试专用版（按标准流程）
 import gpiod
 import time
 import sys
@@ -25,7 +25,7 @@ VREF = 2.5  # 参考电压固定为2.5V (不可配置)
 
 print(f"--- TM7705 ADC 控制启动 (gpiod 1.x) ---")
 print(f"SPI时钟频率: {SPI_CLOCK_FREQ_HZ} Hz")
-print(f"Version: v1.8")
+print(f"Version: v2.0")
 print(f"参考电压: {VREF} V")
 print("重要提醒：TM7705的RESET引脚应连接5V/3.3V正电源")
 print("----------------------------------")
@@ -159,79 +159,14 @@ def wait_for_ready(timeout_sec=1.0):
     if line_drdy is None:
         raise RuntimeError("DRDY线路未初始化")
     
-    # 先检查初始状态
-    initial_state = line_drdy.get_value()
-    print(f"DRDY初始状态: {initial_state} ({'高电平' if initial_state else '低电平'})")
-    
     start_time = time.time()
-    check_count = 0
-    
     while time.time() - start_time < timeout_sec:
-        drdy_value = line_drdy.get_value()
-        check_count += 1
-        
-        if drdy_value == 0:  # DRDY低电平表示数据就绪
-            print(f"DRDY变为低电平，耗时: {(time.time() - start_time)*1000:.1f}ms, 检查次数: {check_count}")
+        if line_drdy.get_value() == 0:  # DRDY低电平表示数据就绪
             return True
-        
-        # 每100ms显示一次状态
-        if check_count % 100 == 0:
-            elapsed = time.time() - start_time
-            print(f"等待中... {elapsed:.1f}s, DRDY状态: {drdy_value}")
-        
         time.sleep(0.001)  # 1ms间隔检查
-    
-    print(f"超时：DRDY信号未变低 (检查次数: {check_count})")
     return False
 
-def diagnose_drdy_issue():
-    """诊断DRDY信号问题"""
-    print("=== DRDY信号诊断 ===")
-    
-    if line_drdy is None:
-        print("错误：DRDY线路未初始化")
-        return False
-    
-    # 检查DRDY引脚配置
-    print(f"DRDY引脚配置检查:")
-    print(f"  芯片: {CHIP_SCK_DOUT_DRDY_NAME}")
-    print(f"  引脚号: {LINE_DRDY}")
-    
-    # 连续监测DRDY状态
-    print(f"\n连续监测DRDY状态 (5秒):")
-    start_time = time.time()
-    states = []
-    timestamps = []
-    
-    while time.time() - start_time < 5.0:
-        state = line_drdy.get_value()
-        states.append(state)
-        timestamps.append(time.time() - start_time)
-        time.sleep(0.01)  # 10ms采样间隔
-    
-    # 分析结果
-    high_count = states.count(1)
-    low_count = states.count(0)
-    total_samples = len(states)
-    
-    print(f"\n监测结果:")
-    print(f"  总采样数: {total_samples}")
-    print(f"  高电平次数: {high_count} ({high_count/total_samples*100:.1f}%)")
-    print(f"  低电平次数: {low_count} ({low_count/total_samples*100:.1f}%)")
-    
-    if low_count == 0:
-        print("警告：DRDY始终为高电平，可能存在以下问题:")
-        print("  1. 硬件连接问题")
-        print("  2. TM7705未正确上电")
-        print("  3. 参考电压缺失")
-        print("  4. 芯片故障")
-        return False
-    elif high_count == 0:
-        print("注意：DRDY始终为低电平，可能是正常状态")
-        return True
-    else:
-        print("DRDY信号有变化，可能是时序问题")
-        return True
+
 
 
 def calculate_voltage_range(gain, unipolar=True):
@@ -343,7 +278,7 @@ def calibrate_zero_point():
         return None
 
 def configure_tm7705(gain, channel, unipolar=True):
-    """配置TM7705寄存器
+    """配置TM7705寄存器 - 必须步骤！
     Args:
         gain: 增益值 (1, 2, 4, 8, 16, 32, 64, 128)
         channel: 通道号 (0或1)
@@ -357,58 +292,40 @@ def configure_tm7705(gain, channel, unipolar=True):
         current_channel = channel
         INPUT_MODE = "unipolar" if unipolar else "bipolar"
         
-        print(f"开始配置TM7705...")
-        print(f"  目标配置: 通道{channel}, 增益{gain}x, {'单极性' if unipolar else '双极性'}模式")
+        print(f"=== TM7705配置开始 ===")
+        print(f"目标配置: 通道{channel}, 增益{gain}x, {'单极性' if unipolar else '双极性'}模式")
         
-        # TM7705配置序列
-        # 1. 发送复位命令 (写通信寄存器)
-        print("  步骤1: 发送复位命令")
+        # 1. 发送复位命令
+        print("1. 发送复位命令")
         reset_cmd = 0x20  # 写通信寄存器命令
         spi_write_byte(reset_cmd)
-        time.sleep(0.01)  # 等待稳定
+        time.sleep(0.01)
         
         # 2. 配置设置寄存器
-        print("  步骤2: 配置设置寄存器")
-        # 构造设置寄存器值
+        print("2. 配置设置寄存器")
         # 格式: MD1MD0xCH1CH0G2G1G0
-        # MD1MD0: 工作模式 (01 = 自校准模式)
-        # CH1CH0: 通道选择
-        # G2G1G0: 增益选择
-        setup_reg = 0x40  # 01000000 - 自校准模式, 通道0
+        setup_reg = 0x40  # 01000000 - 自校准模式
         setup_reg |= (channel & 0x03) << 4  # 通道位
         
         # 增益映射
         gain_map = {1: 0, 2: 1, 4: 2, 8: 3, 16: 4, 32: 5, 64: 6, 128: 7}
         if gain not in gain_map:
             raise ValueError(f"不支持的增益值: {gain}")
-        setup_reg |= gain_map[gain]  # 增益位
+        setup_reg |= gain_map[gain]
         
-        # 如果是双极性模式，设置相应位
+        # 双极性模式设置
         if not unipolar:
-            setup_reg |= 0x80  # 设置双极性位
+            setup_reg |= 0x80
         
-        print(f"  发送配置值: 0x{setup_reg:02X}")
+        print(f"发送配置值: 0x{setup_reg:02X}")
         spi_write_byte(setup_reg)
-        time.sleep(0.05)  # 等待配置生效
+        time.sleep(0.05)
         
-        # 3. 等待首次转换完成
-        print("  步骤3: 等待首次转换完成")
-        if wait_for_ready(2.0):  # 等待2秒
-            print("  首次转换完成，DRDY信号正常")
-        else:
-            print("  警告：首次转换超时，但继续配置")
-        
-        print(f"TM7705配置完成:")
-        print(f"  通道: {channel}")
-        print(f"  增益: {gain}x")
-        print(f"  模式: {'单极性' if unipolar else '双极性'}")
-        
-        # 显示电压范围
-        min_v, max_v, desc = calculate_voltage_range(gain, unipolar)
-        print(f"  测量范围: {desc}")
+        print(f"✅ TM7705配置完成")
+        print(f"芯片开始自动连续转换，DRDY将周期性变低")
         
     except Exception as e:
-        print(f"配置TM7705失败: {e}")
+        print(f"❌ 配置TM7705失败: {e}")
         raise
 
 
@@ -420,15 +337,6 @@ def tm7705_main():
         print("SPI初始化失败，退出")
         return
     
-    # 初始化后先进行DRDY诊断
-    print("\n=== 初始DRDY状态检查 ===")
-    if not diagnose_drdy_issue():
-        print("\n建议检查硬件连接和电源供应!")
-        response = input("是否继续测试? (y/n): ")
-        if response.lower() != 'y':
-            cleanup_gpio()
-            return
-    
     try:
         # 获取用户增益选择
         selected_gain = get_user_gain_selection()
@@ -439,30 +347,36 @@ def tm7705_main():
         # 等待稳定
         time.sleep(0.1)
         
-        print("\n=== TM7705测试 ===")
+        print("\n=== 等待DRDY信号周期性变低 ===")
+        print("芯片已开始自动连续转换...")
         
-        # 连续读取测试
-        print("\n连续读取测试 (10次):")
-        voltages = []
-        for i in range(10):
-            data, voltage = read_tm7705_data()
-            if data is not None:
-                print(f"第{i+1:2d}次: 0x{data:04X} ({data:5d}), 电压: {voltage:8.4f}V")
-                voltages.append(voltage)
+        # 3. 等待并观察DRDY信号
+        success_count = 0
+        max_waits = 5
+        
+        for i in range(max_waits):
+            print(f"\n3.{i+1} 等待第{i+1}次DRDY信号...")
+            if wait_for_ready(2.0):  # 等待2秒
+                success_count += 1
+                print(f"✅ DRDY信号变低 - 第{success_count}次成功")
+                
+                # 4. 读取数据（可选，不影响DRDY）
+                print("4. 读取数据")
+                data, voltage = read_tm7705_data()
+                if data is not None:
+                    print(f"读取数据: 0x{data:04X} ({data}), 电压: {voltage:.4f}V")
+                
+                time.sleep(0.1)  # 等待下次转换
             else:
-                print(f"第{i+1:2d}次: 读取失败")
-            time.sleep(0.5)
+                print(f"❌ 等待超时")
+                break
         
-        # 统计信息
-        if voltages:
-            avg_voltage = sum(voltages) / len(voltages)
-            min_voltage = min(voltages)
-            max_voltage = max(voltages)
-            print(f"\n统计信息:")
-            print(f"  平均值: {avg_voltage:.4f}V")
-            print(f"  最小值: {min_voltage:.4f}V")
-            print(f"  最大值: {max_voltage:.4f}V")
-            print(f"  波动范围: {max_voltage - min_voltage:.4f}V")
+        print(f"\n=== 测试结果 ===")
+        print(f"成功捕获DRDY信号: {success_count}/{max_waits}次")
+        if success_count > 0:
+            print("🎉 TM7705工作正常！")
+        else:
+            print("❌ TM7705可能存在问题，请检查硬件连接")
             
     except KeyboardInterrupt:
         print("\n用户中断")
