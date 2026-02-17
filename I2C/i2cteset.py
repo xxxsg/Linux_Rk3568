@@ -55,15 +55,15 @@ except Exception as e:
 # 6. 查看 GPIO 芯片
 print("\n【GPIO 芯片信息】")
 try:
-    # 使用 gpiod 1.x 的写法
-    chip_names = ["gpiochip0", "gpiochip1", "gpiochip2", "gpiochip3", "gpiochip4"]
-    for name in chip_names:
+    # 遍历所有可能的GPIO芯片
+    for i in range(10):  # 检查gpiochip0到gpiochip9
         try:
-            chip = gpiod.Chip(f"/dev/{name}")
-            print(f"  {name}: {chip.num_lines} 个 GPIO")
+            chip_name = f"gpiochip{i}"
+            chip = gpiod.Chip(f"/dev/{chip_name}")
+            print(f"  {chip_name}: {chip.num_lines} 个 GPIO")
             chip.close()
         except:
-            pass  # 芯片不存在时跳过
+            continue  # 芯片不存在时继续检查下一个
 except Exception as e:
     print(f"  无法获取：{e}")
 
