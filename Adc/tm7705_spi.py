@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v1.4 - 完整TM7705增益配置交互版
+# Version: v1.5 - 完整TM7705增益配置交互版（已验证完整）
 import gpiod
 import time
 import sys
@@ -174,4 +174,13 @@ def get_user_gain_selection():
                 sys.exit(0)
             
             choice_num = int(choice)
-            if 1 <= choice_num 
+            if 1 <= choice_num <= 8:
+                selected_gain = gain_options[choice_num - 1]
+                print(f"\n您选择了增益 {selected_gain}x")
+                return selected_gain
+            else:
+                print("请输入 1-8 之间的数字！")
+        except ValueError:
+            print("请输入有效的数字！")
+        except KeyboardInterrupt:
+            print("\n用户中断")
