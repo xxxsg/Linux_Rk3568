@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v1.7 - 完整TM7705增益配置交互版（DRDY诊断增强版）
+# Version: v1.8 - 完整TM7705增益配置交互版（完整SPI配置版）
 import gpiod
 import time
 import sys
@@ -25,8 +25,9 @@ VREF = 2.5  # 参考电压固定为2.5V (不可配置)
 
 print(f"--- TM7705 ADC 控制启动 (gpiod 1.x) ---")
 print(f"SPI时钟频率: {SPI_CLOCK_FREQ_HZ} Hz")
-print(f"Version: v1.7")
+print(f"Version: v1.8")
 print(f"参考电压: {VREF} V")
+print("重要提醒：TM7705的RESET引脚应连接5V/3.3V正电源")
 print("----------------------------------")
 
 # 全局变量
@@ -356,24 +357,46 @@ def configure_tm7705(gain, channel, unipolar=True):
         current_channel = channel
         INPUT_MODE = "unipolar" if unipolar else "bipolar"
         
-        # 构造配置字节
-        # 格式: 0b0xxxCCGG (x=don't care, C=channel, G=gain)
-        config_byte = 0x20  # 写寄存器命令
-        config_byte |= (channel & 0x01) << 3  # 通道位
+        print(f"开始配置TM7705...")
+        print(f"  目标配置: 通道{channel}, 增益{gain}x, {'单极性' if unipolar else '双极性'}模式")
+        
+        # TM7705配置序列
+        # 1. 发送复位命令 (写通信寄存器)
+        print("  步骤1: 发送复位命令")
+        reset_cmd = 0x20  # 写通信寄存器命令
+        spi_write_byte(reset_cmd)
+        time.sleep(0.01)  # 等待稳定
+        
+        # 2. 配置设置寄存器
+        print("  步骤2: 配置设置寄存器")
+        # 构造设置寄存器值
+        # 格式: MD1MD0xCH1CH0G2G1G0
+        # MD1MD0: 工作模式 (01 = 自校准模式)
+        # CH1CH0: 通道选择
+        # G2G1G0: 增益选择
+        setup_reg = 0x40  # 01000000 - 自校准模式, 通道0
+        setup_reg |= (channel & 0x03) << 4  # 通道位
         
         # 增益映射
         gain_map = {1: 0, 2: 1, 4: 2, 8: 3, 16: 4, 32: 5, 64: 6, 128: 7}
         if gain not in gain_map:
             raise ValueError(f"不支持的增益值: {gain}")
+        setup_reg |= gain_map[gain]  # 增益位
         
-        config_byte |= gain_map[gain]  # 增益位
-        
-        # 如果是双极性模式，在最高位设置
+        # 如果是双极性模式，设置相应位
         if not unipolar:
-            config_byte |= 0x80
+            setup_reg |= 0x80  # 设置双极性位
         
-        # 发送配置
-        spi_write_byte(config_byte)
+        print(f"  发送配置值: 0x{setup_reg:02X}")
+        spi_write_byte(setup_reg)
+        time.sleep(0.05)  # 等待配置生效
+        
+        # 3. 等待首次转换完成
+        print("  步骤3: 等待首次转换完成")
+        if wait_for_ready(2.0):  # 等待2秒
+            print("  首次转换完成，DRDY信号正常")
+        else:
+            print("  警告：首次转换超时，但继续配置")
         
         print(f"TM7705配置完成:")
         print(f"  通道: {channel}")
