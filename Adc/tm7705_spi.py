@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Version: v1.4 - 完整TM7705增益配置交互版
 import gpiod
 import time
 import sys
@@ -173,55 +174,4 @@ def get_user_gain_selection():
                 sys.exit(0)
             
             choice_num = int(choice)
-            if 1 <= choice_num <= 8:
-                selected_gain = gain_options[choice_num - 1]
-                print(f"\n您选择了增益 {selected_gain}x")
-                return selected_gain
-            else:
-                print("请输入 1-8 之间的数字！")
-        except ValueError:
-            print("请输入有效的数字！")
-        except KeyboardInterrupt:
-            print("\n用户中断")
-            sys.exit(0)
-
-
-def configure_tm7705(gain=1, channel=0, unipolar=True):
-    """
-    配置TM7705参数
-    gain: 1, 2, 4, 8, 16, 32, 64, 128
-    channel: 0 或 1
-    unipolar: True=单极性, False=双极性
-    """
-    global current_gain, current_channel
-    
-    # 计算增益位值 (0-7对应1-128倍)
-    gain_values = [1, 2, 4, 8, 16, 32, 64, 128]
-    gain_index = gain_values.index(gain) if gain in gain_values else 0
-    
-    # 配置寄存器格式 (根据AD7705/TM7705数据手册)
-    # 寄存器地址: 0x10 (配置寄存器)
-    # 格式: 1000 0000 | (gain<<4) | (channel<<2) | (unipolar<<1) | 0
-    # 实际值: 0x10 | (gain_index<<4) | (channel<<2) | (1 if unipolar else 0)
-    
-    config_high = 0x10 | (gain_index << 4) | (channel << 2) | (1 if unipolar else 0)
-    config_low = 0x00
-    
-    # 写入配置寄存器
-    spi_write_byte(0x10)  # 寄存器地址
-    spi_write_byte(config_high)  # 高字节
-    spi_write_byte(config_low)   # 低字节
-    
-    # 更新全局变量
-    current_gain = gain
-    current_channel = channel
-    
-    # 显示配置信息
-    min_v, max_v, desc = calculate_voltage_range(gain, unipolar)
-    print(f"TM7705配置完成:")
-    print(f"  增益: {gain}x")
-    print(f"  通道: {channel}")
-    print(f"  模式: {'单极性' if unipolar else '双极性'}")
-    print(f"  输入范围: {desc}")
-    
-    return True
+            if 1 <= choice_num 
