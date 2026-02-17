@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v1.6 - 完整TM7705增益配置交互版（增强版）
+# Version: v1.7 - 完整TM7705增益配置交互版（DRDY诊断增强版）
 import gpiod
 import time
 import sys
@@ -25,7 +25,7 @@ VREF = 2.5  # 参考电压固定为2.5V (不可配置)
 
 print(f"--- TM7705 ADC 控制启动 (gpiod 1.x) ---")
 print(f"SPI时钟频率: {SPI_CLOCK_FREQ_HZ} Hz")
-print(f"Version: v1.6")
+print(f"Version: v1.7")
 print(f"参考电压: {VREF} V")
 print("----------------------------------")
 
@@ -158,12 +158,80 @@ def wait_for_ready(timeout_sec=1.0):
     if line_drdy is None:
         raise RuntimeError("DRDY线路未初始化")
     
+    # 先检查初始状态
+    initial_state = line_drdy.get_value()
+    print(f"DRDY初始状态: {initial_state} ({'高电平' if initial_state else '低电平'})")
+    
     start_time = time.time()
+    check_count = 0
+    
     while time.time() - start_time < timeout_sec:
-        if line_drdy.get_value() == 0:  # DRDY低电平表示数据就绪
+        drdy_value = line_drdy.get_value()
+        check_count += 1
+        
+        if drdy_value == 0:  # DRDY低电平表示数据就绪
+            print(f"DRDY变为低电平，耗时: {(time.time() - start_time)*1000:.1f}ms, 检查次数: {check_count}")
             return True
+        
+        # 每100ms显示一次状态
+        if check_count % 100 == 0:
+            elapsed = time.time() - start_time
+            print(f"等待中... {elapsed:.1f}s, DRDY状态: {drdy_value}")
+        
         time.sleep(0.001)  # 1ms间隔检查
+    
+    print(f"超时：DRDY信号未变低 (检查次数: {check_count})")
     return False
+
+def diagnose_drdy_issue():
+    """诊断DRDY信号问题"""
+    print("=== DRDY信号诊断 ===")
+    
+    if line_drdy is None:
+        print("错误：DRDY线路未初始化")
+        return False
+    
+    # 检查DRDY引脚配置
+    print(f"DRDY引脚配置检查:")
+    print(f"  芯片: {CHIP_SCK_DOUT_DRDY_NAME}")
+    print(f"  引脚号: {LINE_DRDY}")
+    
+    # 连续监测DRDY状态
+    print(f"\n连续监测DRDY状态 (5秒):")
+    start_time = time.time()
+    states = []
+    timestamps = []
+    
+    while time.time() - start_time < 5.0:
+        state = line_drdy.get_value()
+        states.append(state)
+        timestamps.append(time.time() - start_time)
+        time.sleep(0.01)  # 10ms采样间隔
+    
+    # 分析结果
+    high_count = states.count(1)
+    low_count = states.count(0)
+    total_samples = len(states)
+    
+    print(f"\n监测结果:")
+    print(f"  总采样数: {total_samples}")
+    print(f"  高电平次数: {high_count} ({high_count/total_samples*100:.1f}%)")
+    print(f"  低电平次数: {low_count} ({low_count/total_samples*100:.1f}%)")
+    
+    if low_count == 0:
+        print("警告：DRDY始终为高电平，可能存在以下问题:")
+        print("  1. 硬件连接问题")
+        print("  2. TM7705未正确上电")
+        print("  3. 参考电压缺失")
+        print("  4. 芯片故障")
+        return False
+    elif high_count == 0:
+        print("注意：DRDY始终为低电平，可能是正常状态")
+        return True
+    else:
+        print("DRDY信号有变化，可能是时序问题")
+        return True
+
 
 def calculate_voltage_range(gain, unipolar=True):
     """
@@ -328,6 +396,15 @@ def tm7705_main():
     if not spi_init():
         print("SPI初始化失败，退出")
         return
+    
+    # 初始化后先进行DRDY诊断
+    print("\n=== 初始DRDY状态检查 ===")
+    if not diagnose_drdy_issue():
+        print("\n建议检查硬件连接和电源供应!")
+        response = input("是否继续测试? (y/n): ")
+        if response.lower() != 'y':
+            cleanup_gpio()
+            return
     
     try:
         # 获取用户增益选择
