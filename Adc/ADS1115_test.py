@@ -53,19 +53,6 @@ COMP_LAT_NON_LATCHING = 0x000 # Bit 2 = 0
 COMP_QUE_DISABLE = 0x003      # Bits 1-0 = 11 (禁用比较器队列)
 
 # 组合最终的连续转换配置字
-# CONTINUOUS_CONFIG_WORD = (
-#     0x8000 | # Bit 15 (OS): 写入时启动连续转换
-#     MUX_CONFIGS[TEST_CHANNEL] |
-#     PGA_SETTINGS[TEST_GAIN] |
-#     MODE_CONTINUOUS |
-#     DATA_RATE_8SPS |
-#     COMP_MODE_TRADITIONAL |
-#     COMP_POL_ACTIVE_LOW |
-#     COMP_LAT_NON_LATCHING |
-#     COMP_QUE_DISABLE
-# )
-
-# 新增：1倍增益配置字
 CONTINUOUS_CONFIG_WORD = (
     0x8000 | # Bit 15 (OS): 写入时启动连续转换
     MUX_CONFIGS[TEST_CHANNEL] |
@@ -78,17 +65,9 @@ CONTINUOUS_CONFIG_WORD = (
     COMP_QUE_DISABLE
 )
 
-# 电压系数 (mV per bit)，根据增益查表
-# VOLTAGE_COEFFICIENT_MV = {
-#     0.667: 0.1875,
-#     1: 0.125,
-#     2: 0.0625,
-#     4: 0.03125,
-#     8: 0.015625,
-#     16: 0.0078125,
-# }[TEST_GAIN]
+print(f"[DEBUG] 计算出的配置字: 0x{CONTINUOUS_CONFIG_WORD:04X}")
 
-# 新增：1倍增益对应的电压系数
+# 电压系数 (mV per bit)，根据增益查表
 VOLTAGE_COEFFICIENT_MV = {
     0.667: 0.1875,
     1: 0.125,      # 1倍增益：每个bit代表0.125mV
@@ -110,9 +89,13 @@ def configure_adc_continuous(bus, device_address, config_word):
         config_word: 16位配置字
     """
     config_bytes = [(config_word >> 8) & 0xFF, config_word & 0xFF]
-    bus.write_i2c_block_data(device_address, REG_CONFIG, config_bytes)
-    print(f"[INFO] 已将配置字 0x{config_word:04X} 写入到 0x{device_address:02X} 的 CONFIG 寄存器")
-    # print(f"[INFO] ADC配置为: 连续转换, AIN{TEST_CHANNEL}, 增益 {TEST_GAIN}x, 8SPS")
+    print(f"[DEBUG] 写入配置字节: {[hex(b) for b in config_bytes]}") # 调试：打印要写入的字节
+    try:
+        bus.write_i2c_block_data(device_address, REG_CONFIG, config_bytes)
+        print(f"[INFO] 已将配置字 0x{config_word:04X} 写入到 0x{device_address:02X} 的 CONFIG 寄存器")
+    except Exception as e:
+        print(f"[ERROR] 写入配置字失败: {e}")
+        raise e # 重新抛出异常以便主函数捕获
     print(f"[INFO] ADC配置为: 连续转换, AIN{TEST_CHANNEL}, 增益 {TEST_GAIN}x, 8SPS, 测量范围1-3.3V")
 
 def read_raw_conversion_data(bus, device_address):
@@ -129,7 +112,9 @@ def read_raw_conversion_data(bus, device_address):
     try:
         # 读取2个字节的数据
         data = bus.read_i2c_block_data(device_address, REG_CONVERSION, 2)
+        print(f"[DEBUG] 读取到的原始字节: {[hex(b) for b in data]}") # 调试：打印读取的字节
         raw_adc = (data[0] << 8) | data[1]
+        print(f"[DEBUG] 组合后的原始值: {raw_adc} (0x{raw_adc:04X})") # 调试：打印原始值
         return raw_adc
     except Exception as e:
         print(f"[ERROR] 读取I2C数据失败: {e}")
@@ -158,7 +143,6 @@ def convert_raw_to_millivolts(raw_value, coefficient_mv):
 
 def continuous_polling_main_loop():
     """主循环：配置并持续读取数据"""
-    # print(f"\n=== ADS1115 连续转换轮询测试 (原始I2C) ===")
     print(f"\n=== ADS1115 连续转换轮询测试 (1倍增益, 1-3.3V测量) ===")
     print(f"测试通道: AIN{TEST_CHANNEL} vs GND")
     print(f"增益: {TEST_GAIN}x")
@@ -177,11 +161,15 @@ def continuous_polling_main_loop():
         # 2. 配置ADS1115为连续转换模式
         configure_adc_continuous(bus, ADS1115_ADDR, CONTINUOUS_CONFIG_WORD)
 
+        # 短暂延时，让配置生效和第一次转换完成
+        time.sleep(0.2)
+
         # 3. 开始主循环读取
         print("\n时间(s)      原始值      电压(mV)      电压(V)")
         print("-------      -----      --------      -------")
         start_time = time.time()
         
+        count = 0 # 添加计数器，只打印前几次读取的详细信息
         while True:
             # 3.1 读取原始数据
             raw_value = read_raw_conversion_data(bus, ADS1115_ADDR)
@@ -197,6 +185,22 @@ def continuous_polling_main_loop():
             v_str = f"{voltage_v:>7.3f}" if voltage_v is not None else "  --  "
             
             print(f"{elapsed_time:7.2f}      {raw_str}      {mv_str}      {v_str}")
+
+            count += 1
+            if count >= 5: # 只打印前5次的调试信息
+                # 移除调试打印函数内的调试信息，让输出更清晰
+                global read_raw_conversion_data
+                original_read_func = read_raw_conversion_data
+                def read_raw_conversion_data_silent(bus, device_address):
+                    try:
+                        data = bus.read_i2c_block_data(device_address, REG_CONVERSION, 2)
+                        raw_adc = (data[0] << 8) | data[1]
+                        return raw_adc
+                    except Exception as e:
+                        print(f"[ERROR] 读取I2C数据失败: {e}")
+                        return None
+                read_raw_conversion_data = read_raw_conversion_data_silent
+
 
             # 3.4 控制读取频率 (例如每秒10次)
             time.sleep(0.1)
@@ -216,7 +220,6 @@ def continuous_polling_main_loop():
 
 
 def main():
-    # print("🚀 ADS1115 原始I2C轮询测试程序启动")
     print("🚀 ADS1115 1倍增益轮询测试程序启动 (测量1-3.3V)")
     continuous_polling_main_loop()
 
