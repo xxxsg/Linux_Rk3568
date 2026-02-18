@@ -30,6 +30,10 @@ TEST_CHANNELS = [0, 1, 2, 3]  # 测试所有4个通道
 TEST_SAMPLES = 5     # 测试样本数
 TEST_DURATION = 1.0  # 测试持续时间(秒)
 
+# DRDY中断配置
+DRDY_CHIP_NAME = 'gpiochip1'  # DRDY使用的GPIO芯片
+DRDY_LINE_NUMBER = 1           # DRDY连接的线路号
+
 # 增益配置和量程信息 (根据ADS1115寄存器定义)
 GAIN_SETTINGS = {
     0.667: {'coeff': 0.1875, 'range': '±6.144V', 'pga': 0x00, 'desc': '2/3倍增益'},
@@ -340,6 +344,86 @@ def continuous_multi_channel_test():
         bus.close()
         return False
 
+def drdy_interrupt_test():
+    """DRDY中断模式测试功能 - 使用chip1 line1"""
+    current_range = GAIN_SETTINGS[CURRENT_GAIN]['range']
+    print(f"\n=== DRDY中断模式测试 (量程: {current_range}) ===")
+    print(f"GPIO芯片: {DRDY_CHIP_NAME}, 线路: {DRDY_LINE_NUMBER}")
+    print("按 Ctrl+C 停止测试")
+    print()
+    
+    # 显示表头
+    print("触发次数   时间(s)    AIN0(mV)   AIN1(mV)   AIN2(mV)   AIN3(mV)   状态")
+    print("--------   -------    --------   --------   --------   --------   ----")
+    
+    try:
+        # 初始化GPIO (gpiod 1.x 写法)
+        chip = gpiod.Chip(DRDY_CHIP_NAME)
+        drdy_line = chip.get_line(DRDY_LINE_NUMBER)
+        
+        # 配置为上升沿中断
+        drdy_line.request(
+            consumer='adc-drdy-test',
+            type=gpiod.LINE_REQ_EV_RISING_EDGE
+        )
+        
+        print(f"✅ DRDY中断已配置 - {DRDY_CHIP_NAME} line {DRDY_LINE_NUMBER}")
+        
+        # 初始化I2C
+        bus = smbus2.SMBus(I2C_BUS)
+        start_time = time.time()
+        trigger_count = 0
+        
+        while True:
+            # 等待DRDY中断事件
+            if drdy_line.event_wait(sec=1):  # 1秒超时
+                event = drdy_line.event_read()
+                if event.type == gpiod.LineEvent.RISING_EDGE:
+                    trigger_count += 1
+                    elapsed_time = time.time() - start_time
+                    
+                    # 读取四个通道数据
+                    channel_voltages = []
+                    all_valid = True
+                    
+                    for channel in TEST_CHANNELS:
+                        voltage_mv = read_channel_mv(bus, channel)
+                        if voltage_mv is not None:
+                            channel_voltages.append(voltage_mv)
+                        else:
+                            channel_voltages.append(None)
+                            all_valid = False
+                        time.sleep(0.005)  # 短暂延时
+                    
+                    # 格式化显示
+                    voltage_strs = []
+                    for voltage in channel_voltages:
+                        if voltage is not None:
+                            voltage_strs.append(f"{voltage:8.2f}")
+                        else:
+                            voltage_strs.append(f"{'--':>8}")
+                    
+                    status = "✅ 正常" if all_valid else "⚠️  错误"
+                    
+                    # 一行输出所有数据
+                    print(f"{trigger_count:8d}   {elapsed_time:7.2f}    {voltage_strs[0]}   {voltage_strs[1]}   {voltage_strs[2]}   {voltage_strs[3]}   {status}")
+            
+    except KeyboardInterrupt:
+        print("\n\n⚠️ 用户停止测试")
+        drdy_line.release()
+        chip.close()
+        bus.close()
+        return True
+    except Exception as e:
+        print(f"\n\n❌ 测试失败: {e}")
+        try:
+            drdy_line.release()
+            chip.close()
+        except:
+            pass
+        bus.close()
+        return False
+
 def calibrate_zero_offset():
     """零点校准功能"""
     print("\n=== 零点校准 ===")
@@ -418,10 +502,26 @@ def main():
     """主函数"""
     print_safety_notice()
     print()
-    print("🚀 ADS1115连续多通道测试程序启动")
+    print("🚀 ADS1115测试程序启动")
     
-    # 直接执行连续多通道测试
-    continuous_multi_channel_test()
+    # 询问测试模式
+    print("\n请选择测试模式:")
+    print("1. 连续定时测试 (每秒读取)")
+    print("2. DRDY中断模式 (chip1 line1)")
+    print("请输入选择 (1/2): ")
+    
+    try:
+        choice = input().strip()
+        if choice == '1':
+            continuous_multi_channel_test()
+        elif choice == '2':
+            drdy_interrupt_test()
+        else:
+            print("无效选择，执行默认连续测试")
+            continuous_multi_channel_test()
+    except:
+        print("输入错误，执行默认连续测试")
+        continuous_multi_channel_test()
     
     success = False
     
