@@ -278,94 +278,66 @@ def multi_channel_test():
         print(f"\n❌ 多通道测试失败: {e}")
         return False
 
-def continuous_test_1s():
-    """1秒钟连续测试功能"""
+def continuous_multi_channel_test():
+    """连续多通道测试功能 - 每秒循环测试并输出四通道数据"""
     current_range = GAIN_SETTINGS[CURRENT_GAIN]['range']
-    print(f"\n=== 1秒钟连续测试 (量程: {current_range}) ===")
-    print(f"开始连续采样 {TEST_DURATION} 秒...")
+    print(f"\n=== 连续多通道测试 (量程: {current_range}) ===")
+    print("按 Ctrl+C 停止测试")
+    print()
+    
+    # 显示表头
+    print("时间(s)    AIN0(mV)   AIN1(mV)   AIN2(mV)   AIN3(mV)   状态")
+    print("-------    --------   --------   --------   --------   ----")
     
     try:
         bus = smbus2.SMBus(I2C_BUS)
-        
-        # 配置ADS1115
-        config_value = 0x8583  # 1倍增益, A0输入, 单次转换
-        config_bytes = [(config_value >> 8) & 0xFF, config_value & 0xFF]
-        bus.write_i2c_block_data(ADS1115_ADDR, 0x01, config_bytes)
-        
-        readings = []
         start_time = time.time()
-        sample_count = 0
+        cycle_count = 0
         
-        # 连续采样1秒钟
-        while (time.time() - start_time) < TEST_DURATION:
-            try:
-                # 等待转换完成
-                time.sleep(0.01)  # 10ms间隔
-                
-                # 读取数据
-                data = bus.read_i2c_block_data(ADS1115_ADDR, 0x00, 2)
-                raw_adc = (data[0] << 8) | data[1]
-                
-                # 处理符号位
-                if raw_adc > 32767:
-                    raw_adc -= 65536
-                
-                # 转换为毫伏 (8倍增益)
-                voltage_mv = raw_adc * VOLTAGE_COEFFICIENT_MV
-                
-                readings.append({
-                    'time': time.time() - start_time,
-                    'voltage': voltage_mv,
-                    'raw': raw_adc
-                })
-                
-                sample_count += 1
-                print(f"\r采样 {sample_count}: {voltage_mv:8.2f}mV (耗时: {time.time() - start_time:.3f}s)", end='')
-                
-            except Exception as e:
-                print(f"\n采样错误: {e}")
-                continue
-        
-        bus.close()
-        
-        # 统计结果
-        if readings:
-            voltages = [r['voltage'] for r in readings]
-            avg_mv = sum(voltages) / len(voltages)
-            min_mv = min(voltages)
-            max_mv = max(voltages)
-            duration = readings[-1]['time'] if readings else 0
-            sampling_rate = len(readings) / duration if duration > 0 else 0
+        while True:
+            cycle_start = time.time()
+            cycle_count += 1
             
-            print(f"\n\n📊 1秒钟测试结果:")
-            print(f"   总采样数: {len(readings)} 次")
-            print(f"   实际耗时: {duration:.3f} 秒")
-            print(f"   采样率: {sampling_rate:.1f} SPS")
-            print(f"   平均电压: {avg_mv:.2f}mV")
-            print(f"   最小电压: {min_mv:.2f}mV")
-            print(f"   最大电压: {max_mv:.2f}mV")
-            print(f"   波动范围: {max_mv - min_mv:.2f}mV")
+            # 读取四个通道
+            channel_voltages = []
+            all_valid = True
             
-            # 显示前几个和后几个采样点
-            print(f"\n📈 采样数据预览:")
-            preview_count = min(5, len(readings))
-            for i in range(preview_count):
-                r = readings[i]
-                print(f"   [{i+1}] {r['time']:.3f}s: {r['voltage']:.4f}V")
+            for channel in TEST_CHANNELS:
+                voltage_mv = read_channel_mv(bus, channel)
+                if voltage_mv is not None:
+                    channel_voltages.append(voltage_mv)
+                else:
+                    channel_voltages.append(None)
+                    all_valid = False
+                time.sleep(0.01)  # 短暂延时
             
-            if len(readings) > preview_count:
-                print("   ...")
-                for i in range(-preview_count, 0):
-                    r = readings[i]
-                    print(f"   [{len(readings)+i+1}] {r['time']:.3f}s: {r['voltage']:.4f}V")
-        
-        return True
-        
+            # 格式化电压显示
+            voltage_strs = []
+            for voltage in channel_voltages:
+                if voltage is not None:
+                    voltage_strs.append(f"{voltage:8.2f}")
+                else:
+                    voltage_strs.append(f"{'--':>8}")
+            
+            # 状态显示
+            status = "✅ 正常" if all_valid else "⚠️  错误"
+            elapsed_time = time.time() - start_time
+            
+            # 一行输出所有数据
+            print(f"{elapsed_time:7.2f}    {voltage_strs[0]}   {voltage_strs[1]}   {voltage_strs[2]}   {voltage_strs[3]}   {status}")
+            
+            # 控制采样间隔约为1秒
+            cycle_duration = time.time() - cycle_start
+            if cycle_duration < 1.0:
+                time.sleep(1.0 - cycle_duration)
+                
     except KeyboardInterrupt:
-        print("\n\n⚠️ 用户中断测试")
-        return False
+        print("\n\n⚠️ 用户停止测试")
+        bus.close()
+        return True
     except Exception as e:
         print(f"\n\n❌ 测试失败: {e}")
+        bus.close()
         return False
 
 def calibrate_zero_offset():
@@ -446,30 +418,10 @@ def main():
     """主函数"""
     print_safety_notice()
     print()
-    print("🚀 ADS1115测试程序启动")
+    print("🚀 ADS1115连续多通道测试程序启动")
     
-    # 询问测试类型
-    print("\n请选择测试类型:")
-    print("1. 4通道同时测试 (推荐)")
-    print("2. 1秒钟连续测试")
-    print("3. 单通道测试")
-    print("请输入选择 (1/2/3): ")
-    
-    try:
-        choice = input().strip()
-        if choice == '1':
-            multi_channel_test()
-            return
-        elif choice == '2':
-            continuous_test_1s()
-            return
-        elif choice == '3':
-            # 继续执行常规单通道测试
-            pass
-        else:
-            print("无效选择，执行默认单通道测试")
-    except:
-        pass  # 继续执行常规测试
+    # 直接执行连续多通道测试
+    continuous_multi_channel_test()
     
     success = False
     
