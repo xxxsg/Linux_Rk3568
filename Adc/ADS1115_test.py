@@ -13,7 +13,7 @@ import os
 # --- 配置参数 ---
 I2C_BUS = 1
 ADS1115_ADDR = 0x48
-TEST_GAIN = 8        # 增益
+TEST_GAIN = 1        # 增益
 TEST_CHANNEL = 0     # 测试通道 (AIN0 vs GND)
 
 # --- ADS1115寄存器地址 ---
@@ -192,4 +192,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
