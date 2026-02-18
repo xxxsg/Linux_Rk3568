@@ -13,8 +13,7 @@ import os
 # --- 配置参数 ---
 I2C_BUS = 1
 ADS1115_ADDR = 0x48
-# TEST_GAIN = 8        # 增益
-TEST_GAIN = 1        # 新增：1倍增益配置
+TEST_GAIN = 8        # 增益
 TEST_CHANNEL = 0     # 测试通道 (AIN0 vs GND)
 
 # --- ADS1115寄存器地址 ---
@@ -53,23 +52,10 @@ COMP_LAT_NON_LATCHING = 0x000 # Bit 2 = 0
 COMP_QUE_DISABLE = 0x003      # Bits 1-0 = 11 (禁用比较器队列)
 
 # 组合最终的连续转换配置字
-# CONTINUOUS_CONFIG_WORD = (
-#     0x8000 | # Bit 15 (OS): 写入时启动连续转换
-#     MUX_CONFIGS[TEST_CHANNEL] |
-#     PGA_SETTINGS[TEST_GAIN] |
-#     MODE_CONTINUOUS |
-#     DATA_RATE_8SPS |
-#     COMP_MODE_TRADITIONAL |
-#     COMP_POL_ACTIVE_LOW |
-#     COMP_LAT_NON_LATCHING |
-#     COMP_QUE_DISABLE
-# )
-
-# 新增：1倍增益配置字
 CONTINUOUS_CONFIG_WORD = (
     0x8000 | # Bit 15 (OS): 写入时启动连续转换
     MUX_CONFIGS[TEST_CHANNEL] |
-    PGA_SETTINGS[TEST_GAIN] |  # 使用1倍增益
+    PGA_SETTINGS[TEST_GAIN] |
     MODE_CONTINUOUS |
     DATA_RATE_8SPS |
     COMP_MODE_TRADITIONAL |
@@ -79,19 +65,9 @@ CONTINUOUS_CONFIG_WORD = (
 )
 
 # 电压系数 (mV per bit)，根据增益查表
-# VOLTAGE_COEFFICIENT_MV = {
-#     0.667: 0.1875,
-#     1: 0.125,
-#     2: 0.0625,
-#     4: 0.03125,
-#     8: 0.015625,
-#     16: 0.0078125,
-# }[TEST_GAIN]
-
-# 新增：1倍增益对应的电压系数
 VOLTAGE_COEFFICIENT_MV = {
     0.667: 0.1875,
-    1: 0.125,      # 1倍增益：每个bit代表0.125mV
+    1: 0.125,
     2: 0.0625,
     4: 0.03125,
     8: 0.015625,
@@ -112,8 +88,7 @@ def configure_adc_continuous(bus, device_address, config_word):
     config_bytes = [(config_word >> 8) & 0xFF, config_word & 0xFF]
     bus.write_i2c_block_data(device_address, REG_CONFIG, config_bytes)
     print(f"[INFO] 已将配置字 0x{config_word:04X} 写入到 0x{device_address:02X} 的 CONFIG 寄存器")
-    # print(f"[INFO] ADC配置为: 连续转换, AIN{TEST_CHANNEL}, 增益 {TEST_GAIN}x, 8SPS")
-    print(f"[INFO] ADC配置为: 连续转换, AIN{TEST_CHANNEL}, 增益 {TEST_GAIN}x, 8SPS, 测量范围1-3.3V")
+    print(f"[INFO] ADC配置为: 连续转换, AIN{TEST_CHANNEL}, 增益 {TEST_GAIN}x, 8SPS")
 
 def read_raw_conversion_data(bus, device_address):
     """
@@ -158,12 +133,10 @@ def convert_raw_to_millivolts(raw_value, coefficient_mv):
 
 def continuous_polling_main_loop():
     """主循环：配置并持续读取数据"""
-    # print(f"\n=== ADS1115 连续转换轮询测试 (原始I2C) ===")
-    print(f"\n=== ADS1115 连续转换轮询测试 (1倍增益, 1-3.3V测量) ===")
+    print(f"\n=== ADS1115 连续转换轮询测试 (原始I2C) ===")
     print(f"测试通道: AIN{TEST_CHANNEL} vs GND")
     print(f"增益: {TEST_GAIN}x")
     print(f"分辨率: {VOLTAGE_COEFFICIENT_MV:.5f} mV/bit")
-    print(f"测量范围: 1-3.3V")
     print("按 Ctrl+C 停止测试")
     print("-" * 60)
 
@@ -178,8 +151,8 @@ def continuous_polling_main_loop():
         configure_adc_continuous(bus, ADS1115_ADDR, CONTINUOUS_CONFIG_WORD)
 
         # 3. 开始主循环读取
-        print("\n时间(s)      原始值      电压(mV)      电压(V)")
-        print("-------      -----      --------      -------")
+        print("\n时间(s)      原始值      电压(mV)")
+        print("-------      -----      --------")
         start_time = time.time()
         
         while True:
@@ -188,15 +161,13 @@ def continuous_polling_main_loop():
             
             # 3.2 转换为电压值
             voltage_mv = convert_raw_to_millivolts(raw_value, VOLTAGE_COEFFICIENT_MV)
-            voltage_v = voltage_mv / 1000 if voltage_mv is not None else None
 
             # 3.3 打印结果
             elapsed_time = time.time() - start_time
             raw_str = f"{raw_value:>7}" if raw_value is not None else "  --  "
             mv_str = f"{voltage_mv:>8.2f}" if voltage_mv is not None else "  --  "
-            v_str = f"{voltage_v:>7.3f}" if voltage_v is not None else "  --  "
             
-            print(f"{elapsed_time:7.2f}      {raw_str}      {mv_str}      {v_str}")
+            print(f"{elapsed_time:7.2f}      {raw_str}      {mv_str}")
 
             # 3.4 控制读取频率 (例如每秒10次)
             time.sleep(0.1)
@@ -216,8 +187,7 @@ def continuous_polling_main_loop():
 
 
 def main():
-    # print("🚀 ADS1115 原始I2C轮询测试程序启动")
-    print("🚀 ADS1115 1倍增益轮询测试程序启动 (测量1-3.3V)")
+    print("🚀 ADS1115 原始I2C轮询测试程序启动")
     continuous_polling_main_loop()
 
 if __name__ == "__main__":
