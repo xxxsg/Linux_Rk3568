@@ -25,13 +25,66 @@ except ImportError:
 # 配置参数
 I2C_BUS = 1
 ADS1115_ADDR = 0x48  # 使用i2cteset.py中的地址
-TEST_GAIN = 1        # 1倍增益
-TEST_CHANNEL = 0     # A0通道
+TEST_GAIN = 8        # 8倍增益
+TEST_CHANNELS = [0, 1, 2, 3]  # 测试所有4个通道
 TEST_SAMPLES = 5     # 测试样本数
 TEST_DURATION = 1.0  # 测试持续时间(秒)
 
-# 校准参数
-OFFSET_CALIBRATION = 0.0  # 偏移校准值(伏特)
+# 增益配置和量程信息 (根据ADS1115寄存器定义)
+GAIN_SETTINGS = {
+    0.667: {'coeff': 0.1875, 'range': '±6.144V', 'pga': 0x00, 'desc': '2/3倍增益'},
+    1: {'coeff': 0.125, 'range': '±4.096V', 'pga': 0x02, 'desc': '1倍增益'},
+    2: {'coeff': 0.0625, 'range': '±2.048V', 'pga': 0x04, 'desc': '2倍增益'},
+    4: {'coeff': 0.03125, 'range': '±1.024V', 'pga': 0x06, 'desc': '4倍增益'},
+    8: {'coeff': 0.015625, 'range': '±512mV', 'pga': 0x08, 'desc': '8倍增益'},
+    16: {'coeff': 0.0078125, 'range': '±256mV', 'pga': 0x0A, 'desc': '16倍增益'}
+}
+
+# 当前配置
+CURRENT_GAIN = 8
+VOLTAGE_COEFFICIENT_MV = GAIN_SETTINGS[CURRENT_GAIN]['coeff']
+CURRENT_PGA = GAIN_SETTINGS[CURRENT_GAIN]['pga']
+
+# 通道配置映射
+CHANNEL_CONFIGS = {
+    0: 0x40,  # AIN0 vs GND
+    1: 0x50,  # AIN1 vs GND  
+    2: 0x60,  # AIN2 vs GND
+    3: 0x70   # AIN3 vs GND
+}
+
+def read_channel_mv(bus, channel):
+    """读取指定通道的电压值(mV)"""
+    try:
+        # 配置通道
+        if channel in CHANNEL_CONFIGS:
+            mux_config = CHANNEL_CONFIGS[channel]
+        else:
+            mux_config = 0x40  # 默认AIN0
+        
+        # 配置寄存器: 当前增益, 指定通道, 单次转换
+        config_value = 0x8000 | mux_config | CURRENT_PGA | 0x01  # OS=1, MUX, PGA, MODE=1
+        config_bytes = [(config_value >> 8) & 0xFF, config_value & 0xFF]
+        bus.write_i2c_block_data(ADS1115_ADDR, 0x01, config_bytes)
+        
+        # 等待转换完成
+        time.sleep(0.1)
+        
+        # 读取数据
+        data = bus.read_i2c_block_data(ADS1115_ADDR, 0x00, 2)
+        raw_adc = (data[0] << 8) | data[1]
+        
+        # 处理符号位
+        if raw_adc > 32767:
+            raw_adc -= 65536
+        
+        # 转换为毫伏
+        voltage_mv = raw_adc * VOLTAGE_COEFFICIENT_MV
+        return voltage_mv
+        
+    except Exception as e:
+        print(f"通道 {channel} 读取失败: {e}")
+        return None
 
 def test_with_dfrobot():
     """使用DFRobot库进行测试"""
@@ -51,13 +104,10 @@ def test_with_dfrobot():
         for i in range(TEST_SAMPLES):
             try:
                 result = ads1115.read_voltage(TEST_CHANNEL)
-                voltage_mv = result['r']
-                voltage_v = voltage_mv / 1000.0
-                # 应用偏移校准
-                calibrated_voltage = voltage_v + OFFSET_CALIBRATION
-                voltages.append(calibrated_voltage)
+                voltage_mv = result['r'] * (0.015625 / 0.125)  # 调整DFRobot库的系数
+                voltages.append(voltage_mv)
                 
-                print(f"   读数 {i+1}: {calibrated_voltage:8.4f}V ({voltage_mv}mV, 校准:{OFFSET_CALIBRATION:+.4f}V)")
+                print(f"   读数 {i+1}: {voltage_mv:8.2f}mV")
                 time.sleep(0.5)
                 
             except Exception as e:
@@ -65,8 +115,8 @@ def test_with_dfrobot():
         
         # 统计结果
         if voltages:
-            avg_v = sum(voltages) / len(voltages)
-            print(f"\n📊 平均电压: {avg_v:.4f}V")
+            avg_mv = sum(voltages) / len(voltages)
+            print(f"\n📊 平均电压: {avg_mv:.2f}mV")
             
         return True
         
@@ -76,7 +126,8 @@ def test_with_dfrobot():
 
 def test_with_direct_i2c():
     """直接使用I2C进行测试"""
-    print("\n=== 直接I2C访问测试 ===")
+    current_range = GAIN_SETTINGS[CURRENT_GAIN]['range']
+    print(f"\n=== 直接I2C访问测试 (量程: {current_range}) ===")
     
     try:
         bus = smbus2.SMBus(I2C_BUS)
@@ -92,10 +143,10 @@ def test_with_direct_i2c():
             return False
         
         # 配置ADS1115
-        print("2. 配置1倍增益...")
+        print("2. 配置当前增益...")
         try:
-            # 配置寄存器: 1倍增益, A0输入, 单次转换
-            config_value = 0x8583  # OS=1, MUX=100, PGA=001, MODE=1
+            # 配置寄存器: 当前增益, A0输入, 单次转换
+            config_value = 0x8000 | 0x40 | CURRENT_PGA | 0x01  # OS=1, MUX=100, PGA, MODE=1
             config_bytes = [(config_value >> 8) & 0xFF, config_value & 0xFF]
             bus.write_i2c_block_data(ADS1115_ADDR, 0x01, config_bytes)
             print(f"✅ 配置写入成功: 0x{config_value:04X}")
@@ -121,14 +172,11 @@ def test_with_direct_i2c():
                 if raw_adc > 32767:
                     raw_adc -= 65536
                 
-                # 转换为电压 (1倍增益: 0.125mV/bit)
-                voltage_mv = raw_adc * 0.125
-                voltage_v = voltage_mv / 1000.0
-                # 应用偏移校准
-                calibrated_voltage = voltage_v + OFFSET_CALIBRATION
-                voltages.append(calibrated_voltage)
+                # 转换为毫伏 (8倍增益: 0.015625mV/bit)
+                voltage_mv = raw_adc * VOLTAGE_COEFFICIENT_MV
+                voltages.append(voltage_mv)
                 
-                print(f"   读数 {i+1}: {calibrated_voltage:8.4f}V (原始:{voltage_v:8.4f}V, 校准:{OFFSET_CALIBRATION:+.4f}V)")
+                print(f"   读数 {i+1}: {voltage_mv:8.2f}mV (原始值: {raw_adc})")
                 
             except Exception as e:
                 print(f"   读数 {i+1}: 失败 - {e}")
@@ -147,17 +195,20 @@ def test_with_direct_i2c():
             print(f"   最大值: {max_v:.4f}V")
             print(f"   波动范围: {max_v - min_v:.4f}V")
             
-            # 简单评估
-            if abs(avg_v) < 0.1:
-                print("   📊 评估: 接近0V (可能未连接信号)")
-            elif 0.5 <= abs(avg_v) <= 3.5:
-                print("   📊 评估: 正常范围 (信号连接正常)")
-            else:
-                print("   📊 评估: 超出预期范围 (请检查连接)")
+            # 根据增益动态评估范围
+            current_range_mv = float(GAIN_SETTINGS[CURRENT_GAIN]['range'].replace('±', '').replace('mV', '').replace('V', ''))
+            if 'V' in GAIN_SETTINGS[CURRENT_GAIN]['range']:
+                current_range_mv *= 1000  # 转换为mV
             
-            # 显示校准信息
-            if abs(OFFSET_CALIBRATION) > 0.001:
-                print(f"   ⚙️  当前偏移校准: {OFFSET_CALIBRATION:+.4f}V")
+            threshold_low = current_range_mv * 0.02  # 2%量程
+            threshold_high = current_range_mv * 0.8   # 80%量程
+            
+            if abs(avg_v) < threshold_low:
+                print(f"   📊 评估: 接近0mV (可能未连接信号)")
+            elif threshold_low <= abs(avg_v) <= threshold_high:
+                print(f"   📊 评估: 正常范围 (信号连接正常)")
+            else:
+                print(f"   📊 评估: 接近满量程 (建议降低增益或检查信号)")
         
         return True
         
@@ -165,9 +216,72 @@ def test_with_direct_i2c():
         print(f"❌ 直接I2C测试失败: {e}")
         return False
 
+def multi_channel_test():
+    """多通道同时测试功能"""
+    current_range = GAIN_SETTINGS[CURRENT_GAIN]['range']
+    print(f"\n=== 4通道同时测试 (量程: {current_range}) ===")
+    
+    try:
+        bus = smbus2.SMBus(I2C_BUS)
+        
+        # 一行显示4个通道
+        print("AIN0(mV)   AIN1(mV)   AIN2(mV)   AIN3(mV)   状态")
+        print("--------   --------   --------   --------   ----")
+        
+        channel_results = {}
+        channel_voltages = []
+        
+        # 依次读取4个通道
+        for channel in TEST_CHANNELS:
+            voltage_mv = read_channel_mv(bus, channel)
+            if voltage_mv is not None:
+                channel_results[channel] = voltage_mv
+                channel_voltages.append(voltage_mv)
+            else:
+                channel_results[channel] = None
+                channel_voltages.append(None)
+            time.sleep(0.05)  # 短暂延时
+        
+        # 一行输出所有通道数据
+        voltage_strs = []
+        for voltage in channel_voltages:
+            if voltage is not None:
+                voltage_strs.append(f"{voltage:8.2f}")
+            else:
+                voltage_strs.append(f"{'--':>8}")
+        
+        # 检查所有通道状态
+        all_valid = all(v is not None for v in channel_voltages)
+        status = "✅ 全部正常" if all_valid else "⚠️  部分错误"
+        
+        print(f"{voltage_strs[0]}   {voltage_strs[1]}   {voltage_strs[2]}   {voltage_strs[3]}   {status}")
+        
+        bus.close()
+        
+        # 统计有效通道
+        valid_voltages = [v for v in channel_results.values() if v is not None]
+        if valid_voltages:
+            avg_mv = sum(valid_voltages) / len(valid_voltages)
+            min_mv = min(valid_voltages)
+            max_mv = max(valid_voltages)
+            
+            print(f"\n📊 统计结果:")
+            print(f"   有效通道: {len(valid_voltages)}/4")
+            print(f"   平均值: {avg_mv:.2f}mV")
+            print(f"   最小值: {min_mv:.2f}mV")
+            print(f"   最大值: {max_mv:.2f}mV")
+            print(f"   波动范围: {max_mv - min_mv:.2f}mV")
+        
+        return True
+        
+    except Exception as e:
+        print(f"\n❌ 多通道测试失败: {e}")
+        return False
+
 def continuous_test_1s():
     """1秒钟连续测试功能"""
-    print("\n=== 1秒钟连续测试 ===")
+    current_range = GAIN_SETTINGS[CURRENT_GAIN]['range']
+    print(f"\n=== 1秒钟连续测试 (量程: {current_range}) ===")
     print(f"开始连续采样 {TEST_DURATION} 秒...")
     
     try:
@@ -196,19 +310,17 @@ def continuous_test_1s():
                 if raw_adc > 32767:
                     raw_adc -= 65536
                 
-                # 转换为电压
-                voltage_mv = raw_adc * 0.125
-                voltage_v = voltage_mv / 1000.0
-                calibrated_voltage = voltage_v + OFFSET_CALIBRATION
+                # 转换为毫伏 (8倍增益)
+                voltage_mv = raw_adc * VOLTAGE_COEFFICIENT_MV
                 
                 readings.append({
                     'time': time.time() - start_time,
-                    'voltage': calibrated_voltage,
+                    'voltage': voltage_mv,
                     'raw': raw_adc
                 })
                 
                 sample_count += 1
-                print(f"\r采样 {sample_count}: {calibrated_voltage:8.4f}V (耗时: {time.time() - start_time:.3f}s)", end='')
+                print(f"\r采样 {sample_count}: {voltage_mv:8.2f}mV (耗时: {time.time() - start_time:.3f}s)", end='')
                 
             except Exception as e:
                 print(f"\n采样错误: {e}")
@@ -219,9 +331,9 @@ def continuous_test_1s():
         # 统计结果
         if readings:
             voltages = [r['voltage'] for r in readings]
-            avg_v = sum(voltages) / len(voltages)
-            min_v = min(voltages)
-            max_v = max(voltages)
+            avg_mv = sum(voltages) / len(voltages)
+            min_mv = min(voltages)
+            max_mv = max(voltages)
             duration = readings[-1]['time'] if readings else 0
             sampling_rate = len(readings) / duration if duration > 0 else 0
             
@@ -229,10 +341,10 @@ def continuous_test_1s():
             print(f"   总采样数: {len(readings)} 次")
             print(f"   实际耗时: {duration:.3f} 秒")
             print(f"   采样率: {sampling_rate:.1f} SPS")
-            print(f"   平均电压: {avg_v:.4f}V")
-            print(f"   最小电压: {min_v:.4f}V")
-            print(f"   最大电压: {max_v:.4f}V")
-            print(f"   波动范围: {max_v - min_v:.4f}V")
+            print(f"   平均电压: {avg_mv:.2f}mV")
+            print(f"   最小电压: {min_mv:.2f}mV")
+            print(f"   最大电压: {max_mv:.2f}mV")
+            print(f"   波动范围: {max_mv - min_mv:.2f}mV")
             
             # 显示前几个和后几个采样点
             print(f"\n📈 采样数据预览:")
@@ -272,7 +384,7 @@ def calibrate_zero_offset():
         bus = smbus2.SMBus(I2C_BUS)
         
         # 配置ADS1115
-        config_value = 0x8583  # 与测试配置相同
+        config_value = 0x8000 | 0x40 | CURRENT_PGA | 0x01  # 与测试配置相同
         config_bytes = [(config_value >> 8) & 0xFF, config_value & 0xFF]
         bus.write_i2c_block_data(ADS1115_ADDR, 0x01, config_bytes)
         
@@ -309,31 +421,53 @@ def calibrate_zero_offset():
         print(f"\n❌ 校准失败: {e}")
         return False
 
+def print_safety_notice():
+    """打印安全注意事项和量程信息"""
+    print("⚠️  ADS1115测试程序 - 安全注意事项")
+    print("=" * 50)
+    print("重要提醒：")
+    print("1. 确保待测信号与ADS1115共地")
+    print("2. 输入电压不得超过当前量程")
+    print("3. 测试前请确认接线正确")
+    print()
+    
+    print("📋 当前配置量程表：")
+    print("增益    量程       分辨率     PGA值   适用场景")
+    print("------  ----------  ---------  ------  --------")
+    for gain, info in sorted(GAIN_SETTINGS.items()):
+        marker = "★" if gain == CURRENT_GAIN else "○"
+        gain_display = f"{gain:.3f}" if gain < 1 else f"{int(gain)}"
+        print(f"{marker} {gain_display:>5}x  {info['range']:>10}  {info['coeff']:.5f}mV/bit  0x{info['pga']:02X}    {info['desc']}")
+    print()
+    print(f"当前设置: {GAIN_SETTINGS[CURRENT_GAIN]['desc']} ({GAIN_SETTINGS[CURRENT_GAIN]['range']})")
+    print("=" * 50)
+
 def main():
     """主函数"""
-    print("🚀 ADS1115简单测试程序")
-    print(f"配置: 地址=0x{ADS1115_ADDR:02X}, 增益={TEST_GAIN}x, 通道=A{TEST_CHANNEL}")
-    if abs(OFFSET_CALIBRATION) > 0.001:
-        print(f"⚙️  当前偏移校准: {OFFSET_CALIBRATION:+.4f}V")
-    print("=" * 50)
+    print_safety_notice()
+    print()
+    print("🚀 ADS1115测试程序启动")
     
-    # 询问是否需要校准
-    print("\n是否需要进行零点校准? (y/N): ")
-    try:
-        choice = input().strip().lower()
-        if choice == 'y' or choice == 'yes':
-            if not calibrate_zero_offset():
-                return
-    except:
-        pass  # 继续执行测试
+    # 询问测试类型
+    print("\n请选择测试类型:")
+    print("1. 4通道同时测试 (推荐)")
+    print("2. 1秒钟连续测试")
+    print("3. 单通道测试")
+    print("请输入选择 (1/2/3): ")
     
-    # 询问是否进行1秒钟连续测试
-    print("\n是否进行1秒钟连续测试? (y/N): ")
     try:
-        choice = input().strip().lower()
-        if choice == 'y' or choice == 'yes':
+        choice = input().strip()
+        if choice == '1':
+            multi_channel_test()
+            return
+        elif choice == '2':
             continuous_test_1s()
             return
+        elif choice == '3':
+            # 继续执行常规单通道测试
+            pass
+        else:
+            print("无效选择，执行默认单通道测试")
     except:
         pass  # 继续执行常规测试
     
