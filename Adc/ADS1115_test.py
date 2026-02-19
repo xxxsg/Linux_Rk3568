@@ -19,11 +19,6 @@ CONTINUOUS_CONFIG_WORD = (
 
 )
 
-
-
-
-print(f"[DEBUG] 计算出的配置字: 0x{CONTINUOUS_CONFIG_WORD:04X}")
-
 ads1115 = ADS1115()
 
 
