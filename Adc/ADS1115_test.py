@@ -30,7 +30,7 @@ def main():
         #Set the IIC address
         ads1115.set_addr_ADS1115(0x48)
         #Sets the gain and input voltage range.
-        ads1115.set_gain(ADS1115_REG_CONFIG_PGA_2_048V)
+        ads1115.set_gain(ADS1115_REG_CONFIG_PGA_0_512V)
         #Get the Digital Value of Analog of selected channel
         adc0 = ads1115.read_voltage(0)
         time.sleep(0.2)
