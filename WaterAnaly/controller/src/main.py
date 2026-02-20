@@ -12,11 +12,18 @@ from lib.TCA9555 import *
 import smbus2
 import time
 
-# --- 配置参数 ---
-I2C_BUS = 1
-ADS1115_ADDR = 0x48
-TEST_GAIN = 1        # 新增：1倍增益配置
-TEST_CHANNEL = 0     # 测试通道 (AIN0 vs GND)
+# TCA9555引脚分配 (模拟pump_control.py的控制信号)
+# P2: PUL (脉冲信号)
+# P3: DIR (方向信号, 1=正转, 0=反转)
+# P4: ENA (使能信号, 0=使能, 1=禁用)
+
+# 电机参数设置
+SUBDIVISION = 800       # 细分设置 (脉冲/转)
+TARGET_RPM = 300        # 目标转速 (RPM)
+TARGET_FREQ = (TARGET_RPM * SUBDIVISION) / 60.0  # 计算频率
+PERIOD_SEC = 1.0 / TARGET_FREQ
+HALF_PERIOD = PERIOD_SEC / 2.0
+CONTROL_DURATION = 3.0  # 每个阶段控制时间(秒)
 
 ads1115 = ADS1115()
 tca9555 = TCA9555()
@@ -25,10 +32,69 @@ tca9555 = TCA9555()
 
 
 def ctrl_open():
-    tca9555.set_tca9555_pin_high(2)
-    tca9555.set_tca9555_pin_low(3)
-    tca9555.set_tca9555_pin_high(4)
-    tca9555.set_tca9555_pin_low(5)
+    """
+    实现与pump_control.py相同的正转-停止-反转控制逻辑
+    使用TCA9555的P2/P3/P4引脚分别控制PUL/DIR/ENA信号
+    """
+    print("=== 开始蠕动泵控制流程 ===")
+    print(f"目标转速: {TARGET_RPM} RPM")
+    print(f"脉冲频率: {TARGET_FREQ:.2f} Hz")
+    print(f"每个阶段时长: {CONTROL_DURATION} 秒")
+    print("============================")
+    
+    try:
+        # 1. 正转阶段
+        print("\n【阶段1】开始正转...")
+        # 设置方向为正转 (DIR=1)
+        tca9555.set_tca9555_pin_high(3)  # P3=DIR=1 (正转)
+        # 使能电机 (ENA=0)
+        tca9555.set_tca9555_pin_low(4)   # P4=ENA=0 (使能)
+        
+        # 发送脉冲3秒
+        start_time = time.time()
+        pulse_count = 0
+        while (time.time() - start_time) < CONTROL_DURATION:
+            # 产生方波脉冲
+            tca9555.set_tca9555_pin_high(2)  # P2=PUL=1
+            time.sleep(HALF_PERIOD)
+            tca9555.set_tca9555_pin_low(2)   # P2=PUL=0
+            time.sleep(HALF_PERIOD)
+            pulse_count += 1
+        
+        print(f"正转完成，脉冲数: {pulse_count}")
+        
+        # 2. 停止阶段
+        print("\n【阶段2】电机停止中...")
+        tca9555.set_tca9555_pin_high(4)  # P4=ENA=1 (禁用)
+        time.sleep(CONTROL_DURATION)
+        tca9555.set_tca9555_pin_low(4)   # P4=ENA=0 (重新使能)
+        
+        # 3. 反转阶段
+        print("\n【阶段3】开始反转...")
+        tca9555.set_tca9555_pin_low(3)   # P3=DIR=0 (反转)
+        
+        # 发送脉冲3秒
+        start_time = time.time()
+        pulse_count = 0
+        while (time.time() - start_time) < CONTROL_DURATION:
+            # 产生方波脉冲
+            tca9555.set_tca9555_pin_high(2)  # P2=PUL=1
+            time.sleep(HALF_PERIOD)
+            tca9555.set_tca9555_pin_low(2)   # P2=PUL=0
+            time.sleep(HALF_PERIOD)
+            pulse_count += 1
+        
+        print(f"反转完成，脉冲数: {pulse_count}")
+        
+        # 4. 最终停止
+        print("\n【结束】禁用电机...")
+        tca9555.set_tca9555_pin_high(4)  # P4=ENA=1 (禁用)
+        print("电机控制流程完成！")
+        
+    except Exception as e:
+        print(f"控制过程中发生错误: {e}")
+        # 确保电机安全停止
+        tca9555.set_tca9555_pin_high(4)  # 禁用电机
 
 
 def main():
