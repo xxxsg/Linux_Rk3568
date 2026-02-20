@@ -39,6 +39,7 @@ PI_ANL_WAST = 6 # 分析废液
 
 
 def ctrl_open():
+    tca9555.set_tca9555_pin_high(6)
     """
     实现与pump_control.py相同的正转-停止-反转控制逻辑
     使用TCA9555的P10/P11/P12引脚分别控制PUL/DIR/ENA信号
@@ -50,6 +51,13 @@ def ctrl_open():
     print("============================")
     
     try:
+        # 0. 初始化阶段：将所有相关GPIO设置为低电平
+        print("\n【初始化】设置所有控制引脚为低电平...")
+        tca9555.set_tca9555_pin_low(10)  # P10=PUL=0
+        tca9555.set_tca9555_pin_low(11)  # P11=DIR=0
+        tca9555.set_tca9555_pin_low(12)  # P12=ENA=0 (禁用状态)
+        print("初始化完成，所有控制引脚已设为低电平")
+        time.sleep(0.5)  # 短暂延时确保稳定
         # 1. 正转阶段
         print("\n【阶段1】开始正转...")
         # 设置方向为正转 (DIR=1)
