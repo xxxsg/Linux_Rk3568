@@ -28,6 +28,13 @@ CONTROL_DURATION = 3.0  # 每个阶段控制时间(秒)
 ads1115 = ADS1115()
 tca9555 = TCA9555()
 
+DISSOLVER_UP = 1 # 消解器通气口
+DISSOLVER_DOWN = 2 # 消解器进出水口
+
+PI_DISSOLVER = 3 # 电磁阀管道
+PI_STD_1 = 4 # 标准溶液1
+PI_STD_2 = 5 # 标准溶液2
+PI_ANL_WAST = 6 # 分析废液
 
 
 
