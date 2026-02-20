@@ -162,11 +162,17 @@ if __name__ == "__main__":
     # 抽水
     close_all()
     tca9555.set_tca9555_pin_high(PI_STD_1)
+    input("已经开启电磁4 按回车键继续 抽水十秒...")
     pump_control(direction=1, duration=10000)
+    input("按回车键继续 吹水水十秒...")
+    pump_control(direction=0, duration=10000)
+    input("按回车键退出...")
     tca9555.set_tca9555_pin_low(PI_STD_1)
+    
 
-    time.sleep(2)
+    # time.sleep(2)
 
+    
     # 推水
     # ctrl_dissolver(1) # 打开消解器3个阀门
     # pump_control(direction=0, duration=3000)
