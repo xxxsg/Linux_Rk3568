@@ -162,18 +162,18 @@ if __name__ == "__main__":
     # 抽水
     close_all()
     tca9555.set_tca9555_pin_high(PI_STD_1)
-    pump_control(direction=1, duration=3000)
+    pump_control(direction=1, duration=10000)
     tca9555.set_tca9555_pin_low(PI_STD_1)
 
     time.sleep(2)
 
     # 推水
-    ctrl_dissolver(1) # 打开消解器3个阀门
-    pump_control(direction=0, duration=3000)
-    ctrl_dissolver(0) # 关闭消解器3个阀门
+    # ctrl_dissolver(1) # 打开消解器3个阀门
+    # pump_control(direction=0, duration=3000)
+    # ctrl_dissolver(0) # 关闭消解器3个阀门
 
-    # 检测
-    main()
+    # # 检测
+    # main()
 
 
     # 排水
