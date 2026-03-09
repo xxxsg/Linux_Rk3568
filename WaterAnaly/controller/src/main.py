@@ -6,8 +6,9 @@ import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from lib.Lib_ADS1115 import *
+from lib.ADS1115 import *
 from lib.TCA9555 import *
+from lib.PeriPump import *
 
 import smbus2
 import time
@@ -20,13 +21,10 @@ import time
 # 电机参数设置
 SUBDIVISION = 800       # 细分设置 (脉冲/转)
 TARGET_RPM = 300        # 目标转速 (RPM)
-TARGET_FREQ = (TARGET_RPM * SUBDIVISION) / 60.0  # 计算频率
-PERIOD_SEC = 1.0 / TARGET_FREQ
-HALF_PERIOD = PERIOD_SEC / 2.0
-CONTROL_DURATION = 3.0  # 每个阶段控制时间(秒)
 
 ads1115 = ADS1115()
 tca9555 = TCA9555()
+peripump = PeriPump()
 
 DISSOLVER_UP = 1 # 消解器通气口
 DISSOLVER_DOWN = 2 # 消解器进出水口

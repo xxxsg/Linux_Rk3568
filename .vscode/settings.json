@@ -1,0 +1,7 @@
+﻿{
+  "python.defaultInterpreterPath": "E:\\anaconda3\\envs\\rk3568\\python.exe",
+  "python.terminal.activateEnvironment": true,
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/Test"
+  ]
+}
