@@ -1,42 +1,42 @@
-"""Project-wide configuration for the ctrl implementation."""
+﻿"""项目统一配置。"""
 
-# Direction
-DIR_FORWARD = "FORWARD"  # suction
-DIR_REVERSE = "REVERSE"  # dispense / blow
+# 泵方向定义
+DIR_FORWARD = "FORWARD"  # 吸液
+DIR_REVERSE = "REVERSE"  # 推液/吹气
 
-# Sampling and debounce
+# 判定采样参数（用于满/空去抖）
 SAMPLE_PERIOD_MS = 20
 STABLE_COUNT = 10
 VALVE_SWITCH_STABLE_MS = 50
 
-# Timeouts
+# 超时参数
 TIMEOUT_TAKE_LARGE_MS = 15000
 TIMEOUT_TAKE_SMALL_MS = 15000
 TIMEOUT_DISPENSE_MS = 10000
 TIMEOUT_PULL_DIGESTOR_MS = 12000
 HEAT_UP_TIMEOUT_MS = 180000
 
-# Blow compensation
+# 排空补吹时长
 SUPPLEMENT_BLOW_MS = 500
 
-# Process settings
+# 工艺参数
 DIGEST_TEMP_C = 50.0
 HEAT_HOLD_MS = 300000
 DIGEST_SETTLE_TOTAL_MS = 900000
 STIR_DURATION_MS = 15000
 OPTICS_PREHEAT_MS = 2000
 
-# Thresholds (tune by calibration file later)
+# 阈值参数（按 mV 判定）
 UPPER_FULL_THRESHOLD_MV = 1200.0
 LOWER_FULL_THRESHOLD_MV = 1200.0
 EMPTY_THRESHOLD_MV = 2200.0
 
-# I2C addresses
+# I2C 配置
+I2C_BUS_NO = 1
 ADS1115_I2C_ADDR = 0x48
 TCA9555_I2C_ADDR = 0x20
 
-# Valve mapping
-# Mappings aligned with cp_test where available; extra names are placeholders.
+# 阀位映射（沿用 cp_test 可用映射，其他为占位）
 VALVE_PIN_MAP = {
     "计量单元入口": 0,
     "消解器上阀": 1,
@@ -51,18 +51,21 @@ VALVE_PIN_MAP = {
     "试剂C": 13,
 }
 
-# Pump pins (same as cp_test)
+# 泵引脚（TCA9555 上的编号）
 PUMP_PUL_PIN = 10
 PUMP_DIR_PIN = 11
 PUMP_ENA_PIN = 12
 PUMP_SUBDIVISION = 800
 PUMP_TARGET_RPM = 300
 
-# ADS channels
-METER_UPPER_CHANNEL = 0  # P0
-METER_LOWER_CHANNEL = 1  # P1
-DIGEST_OPTICS_CHANNEL = 2  # P2
+# ADS1115 通道分配
+METER_UPPER_CHANNEL = 0  # 计量上透光
+METER_LOWER_CHANNEL = 1  # 计量下透光
+DIGEST_OPTICS_CHANNEL = 2  # 消解度数
+TEMP_CHANNEL = 3  # 预留，当前温度改由 MAX31865 读取
 
-# MAX31865 settings
+# MAX31865 配置
 MAX31865_CS_PIN = "D5"
-
+MAX31865_WIRES = 2
+MAX31865_RTD_NOMINAL = 100.0
+MAX31865_REF_RESISTOR = 430.0
