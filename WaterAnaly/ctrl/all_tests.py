@@ -1,140 +1,89 @@
-﻿"""按需求精简后的测试入口：仅保留 4 个场景。"""
+﻿"""硬件基础联调测试（按当前接线规划）。
 
-import time
+仅保留 3 项：
+1) digitalio 控制 GPIO1：先拉低，按回车后拉高
+2) TCA9555(0x20) 的 0~10 引脚：先全低，按回车后全高
+3) ADS1115 A0~A3 电压读取（mV）
 
-from config import *
-from hardware import create_hardware_context
+原来的流程联调测试场景已停用（按需求注释掉/不执行）。
+"""
 
-# 交互测试参数（直接改这里）
-TEST_SINGLE_VALVE_NAME = "标一"
-TEST_SUCTION_MS = 3000
-TEST_DISPENSE_MS = 3000
+import board
+import busio
+import digitalio
 
+import adafruit_ads1x15.ads1115 as ADS
+from adafruit_ads1x15.analog_in import AnalogIn
+import adafruit_tca9555
 
-def pause(msg):
-    input(msg)
+from config import ADS1115_I2C_ADDR
 
-
-def read_meter_pair(ctx, title):
-    up = ctx.meter_optics.read_upper_transmittance()
-    low = ctx.meter_optics.read_lower_transmittance()
-    print(f"{title} -> upper={up:.2f}mV, lower={low:.2f}mV")
-
-
-def test_a_single_valve(ctx):
-    print("\n=== A. 测试单独开一个阀门 ===")
-    pause(f"回车后关闭全部阀并打开阀门 [{TEST_SINGLE_VALVE_NAME}]...")
-    ctx.valve.close_all()
-    ctx.valve.open(TEST_SINGLE_VALVE_NAME)
-    print(f"已打开阀门: {TEST_SINGLE_VALVE_NAME}")
-
-    pause("回车后关闭该阀门...")
-    ctx.valve.close(TEST_SINGLE_VALVE_NAME)
-    print("已关闭阀门")
+GPIO1_PIN_NAME = "GPIO1"
+VALVE_TCA9555_ADDR = 0x20
 
 
-def test_b_temperature(ctx):
-    print("\n=== B. 测试温度 ===")
-    pause("回车后读取一次当前温度...")
-    t = ctx.temp_ctrl.read_temperature()
-    print(f"temperature={t:.2f}C")
+def _get_board_pin(pin_name):
+    try:
+        return getattr(board, pin_name)
+    except AttributeError as exc:
+        raise ValueError(f"board pin not found: {pin_name!r}") from exc
 
 
-def test_c_meter_with_suction_and_drain(ctx):
-    print("\n=== C. 计量单元读数 -> 吸水 -> 读数 -> 排水 ===")
-
-    pause("回车后读取计量单元两个读数(吸水前)...")
-    read_meter_pair(ctx, "吸水前")
-
-    pause("回车后执行吸水：待测溶液 -> 计量单元入口，泵正转...")
-    ctx.valve.close_all()
-    ctx.valve.open(["待测溶液", "计量单元入口"])
-    time.sleep(VALVE_SWITCH_STABLE_MS / 1000.0)
-    ctx.pump.set_direction(DIR_FORWARD)
-    ctx.pump.enable()
-    ctx.pump.run_for(TEST_SUCTION_MS)
-    ctx.pump.disable()
-    ctx.valve.close_all()
-    print("吸水完成")
-
-    pause("回车后读取计量单元两个读数(吸水后)...")
-    read_meter_pair(ctx, "吸水后")
-
-    pause("回车后执行排水：计量单元 -> 废液1，泵反转...")
-    ctx.valve.close_all()
-    ctx.valve.open(["废液1"])
-    time.sleep(VALVE_SWITCH_STABLE_MS / 1000.0)
-    ctx.pump.set_direction(DIR_REVERSE)
-    ctx.pump.enable()
-    ctx.pump.run_for(TEST_DISPENSE_MS)
-    ctx.pump.disable()
-    ctx.valve.close_all()
-    print("排水完成")
+def test_gpio1_digitalio():
+    print("\n=== 1) digitalio 控制 GPIO1 ===")
+    gpio = digitalio.DigitalInOut(_get_board_pin(GPIO1_PIN_NAME))
+    try:
+        gpio.switch_to_output(value=False)
+        print(f"{GPIO1_PIN_NAME} 已设置为低电平")
+        input("回车后将 GPIO1 设置为高电平...")
+        gpio.value = True
+        print(f"{GPIO1_PIN_NAME} 已设置为高电平")
+    finally:
+        gpio.deinit()
 
 
-def test_d_digestor_with_fill_and_drain(ctx):
-    print("\n=== D. 消解器读数 -> 吸水打到消解池 -> 读数 -> 排水 ===")
+def test_tca9555_valve_0_to_10(i2c):
+    print("\n=== 2) TCA9555(0x20) 控制 0~10 引脚 ===")
+    tca = adafruit_tca9555.TCA9555(i2c, address=VALVE_TCA9555_ADDR)
+    pins = []
 
-    pause("回车后读取消解器当前读数(初始)...")
-    v0 = ctx.digest_optics.read_absorbance()
-    print(f"消解器初始读数={v0:.2f}mV")
+    for pin_no in range(0, 11):
+        pin = tca.get_pin(pin_no)
+        pin.switch_to_output(value=False)
+        pins.append(pin)
+    print("0~10 引脚已全部设置为低电平")
 
-    pause("回车后执行吸水到计量单元：待测溶液 -> 计量单元入口...")
-    ctx.valve.close_all()
-    ctx.valve.open(["待测溶液", "计量单元入口"])
-    time.sleep(VALVE_SWITCH_STABLE_MS / 1000.0)
-    ctx.pump.set_direction(DIR_FORWARD)
-    ctx.pump.enable()
-    ctx.pump.run_for(TEST_SUCTION_MS)
-    ctx.pump.disable()
-    ctx.valve.close_all()
-    print("吸水到计量单元完成")
+    input("回车后将 0~10 引脚全部设置为高电平...")
+    for pin in pins:
+        pin.value = True
+    print("0~10 引脚已全部设置为高电平")
 
-    pause("回车后执行打入消解池：计量单元 -> 消解器上阀+下阀...")
-    ctx.valve.close_all()
-    ctx.valve.open(["消解器上阀", "消解器下阀"])
-    time.sleep(VALVE_SWITCH_STABLE_MS / 1000.0)
-    ctx.pump.set_direction(DIR_REVERSE)
-    ctx.pump.enable()
-    ctx.pump.run_for(TEST_DISPENSE_MS)
-    ctx.pump.disable()
-    ctx.valve.close_all()
-    print("已打入消解池")
 
-    pause("回车后读取消解器读数(加液后)...")
-    v1 = ctx.digest_optics.read_absorbance()
-    print(f"消解器加液后读数={v1:.2f}mV")
+def test_ads1115_a0_to_a3(i2c):
+    print("\n=== 3) 读取 ADS1115 A0~A3 电压 ===")
+    ads = ADS.ADS1115(i2c, address=ADS1115_I2C_ADDR)
+    ads.gain = 1
 
-    pause("回车后排水：抽取消解器 -> 计量单元，再排到废液1...")
-    ctx.valve.close_all()
-    ctx.valve.open(["消解器下阀", "消解器上阀", "计量单元入口"])
-    time.sleep(VALVE_SWITCH_STABLE_MS / 1000.0)
-    ctx.pump.set_direction(DIR_FORWARD)
-    ctx.pump.enable()
-    ctx.pump.run_for(TEST_SUCTION_MS)
-    ctx.pump.disable()
-
-    ctx.valve.close_all()
-    ctx.valve.open(["废液1"])
-    time.sleep(VALVE_SWITCH_STABLE_MS / 1000.0)
-    ctx.pump.set_direction(DIR_REVERSE)
-    ctx.pump.enable()
-    ctx.pump.run_for(TEST_DISPENSE_MS)
-    ctx.pump.disable()
-    ctx.valve.close_all()
-    print("消解器排水完成")
+    channels = [
+        ("A0", AnalogIn(ads, ADS.P0)),
+        ("A1", AnalogIn(ads, ADS.P1)),
+        ("A2", AnalogIn(ads, ADS.P2)),
+        ("A3", AnalogIn(ads, ADS.P3)),
+    ]
+    for name, ch in channels:
+        print(f"{name}: {ch.voltage * 1000.0:.2f} mV")
 
 
 def test_all():
-    ctx = create_hardware_context()
+    i2c = busio.I2C(board.SCL, board.SDA)
     try:
-        test_a_single_valve(ctx)
-        test_b_temperature(ctx)
-        test_c_meter_with_suction_and_drain(ctx)
-        test_d_digestor_with_fill_and_drain(ctx)
-        print("\n全部测试场景执行完成")
+        test_gpio1_digitalio()
+        test_tca9555_valve_0_to_10(i2c)
+        test_ads1115_a0_to_a3(i2c)
+        print("\n全部基础联调测试执行完成")
     finally:
-        ctx.shutdown()
+        if hasattr(i2c, "deinit"):
+            i2c.deinit()
 
 
 if __name__ == "__main__":
