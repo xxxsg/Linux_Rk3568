@@ -136,8 +136,8 @@ def pump_control(direction=1, duration=3000):
 def main():
     print("🚀 ADS1115 1倍增益轮询测试程序启动 (测量1-3.3V)")
     while True :
-        #Set the IIC address
-        ads1115.set_addr_ADS1115(0x48)
+        # Set the I2C address
+        ads1115.set_address(0x48)
         #Sets the gain and input voltage range.
         ads1115.set_gain(ADS1115_REG_CONFIG_PGA_4_096V)
         #Get the Digital Value of Analog of selected channel
@@ -148,8 +148,8 @@ def main():
         adc2 = ads1115.read_voltage(2)
         time.sleep(0.2)
         adc3 = ads1115.read_voltage(3)
-        # print("A0:%dmV A1:%dmV A2:%dmV A3:%dmV" % (adc0['r'],adc1['r'],adc2['r'],adc3['r']))
-        print(f"A0:{adc0['r']}mV   A1:{adc1['r']}mV ")
+        # print("A0:%dmV A1:%dmV A2:%dmV A3:%dmV" % (adc0, adc1, adc2, adc3))
+        print(f"A0:{adc0}mV   A1:{adc1}mV ")
         # print("adc0", adc0)
         time.sleep(0.2)
 
