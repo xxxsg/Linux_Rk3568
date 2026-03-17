@@ -1,111 +1,64 @@
 # Controller Lib README
 
-这个目录存放控制器侧的硬件驱动类，主要包括：
+`controller/lib` 提供控制层使用的硬件抽象接口。
 
-- `ADS1115`：I2C ADC 采样
-- `TCA9555`：I2C GPIO 扩展
+- `ADS1115`：I2C ADC
+- `TCA9555`：I2C GPIO 扩展器
 - `SoftSPI`：基于 `gpiod` 的软件 SPI
-- `MAX31865`：RTD 温度采集
-- `PeriPump`：蠕动泵控制
+- `MAX31865`：RTD 温度采集芯片
+- `pins.py`：通用输出引脚抽象
+- `stepper.py`：步进电机驱动
+- `pump.py`：蠕动泵封装
 
-## 依赖关系
-
-- `ADS1115` 依赖 `smbus2` 或 `smbus`
-- `TCA9555` 依赖 `smbus2`
-- `SoftSPI` 依赖 `gpiod`
-- `MAX31865` 依赖一个 SPI 对象，当前可直接配合 `SoftSPI`
-- `PeriPump` 依赖 `gpiod` 和一个 `TCA9555` 实例
-
-## 快速示例
-
-### ADS1115
+## 导入
 
 ```python
-from lib.ADS1115 import ADS1115, ADS1115_REG_CONFIG_PGA_4_096V
-
-with ADS1115(bus_num=1, addr=0x48) as ads:
-    ads.set_gain(ADS1115_REG_CONFIG_PGA_4_096V)
-    mv = ads.read_voltage(0)
-    print(f"AIN0 = {mv} mV")
-```
-
-### TCA9555
-
-```python
-from lib.TCA9555 import TCA9555
-
-with TCA9555(i2c_bus=1, addr=0x20) as io:
-    io.set_mode([0, 1], "output")
-    io.write(0, True)
-    level = io.read(0, source="output")
-    print(level)
-```
-
-### SoftSPI + MAX31865
-
-```python
-from lib.SoftSPI import SoftSPI
-from lib.MAX31865 import MAX31865
-
-with SoftSPI(
-    sclk=("/dev/gpiochip0", 10),
-    mosi=("/dev/gpiochip0", 11),
-    miso=("/dev/gpiochip0", 12),
-    cs=("/dev/gpiochip1", 5),
-) as spi:
-    with MAX31865(spi, rref=430.0, r0=100.0) as sensor:
-        print(sensor.temperature)
-```
-
-### PeriPump
-
-```python
-from lib.TCA9555 import TCA9555
-from lib.PeriPump import PeriPump
-
-with TCA9555(i2c_bus=1, addr=0x20) as io:
-    pump = PeriPump(
-        tca9555_instance=io,
-        pul_chip="/dev/gpiochip1",
-        pul_line=1,
-        dir_pin=11,
-        ena_pin=10,
-    )
-    pump.set_rpm(300)
-    pump.set_direction(1)
-    pump.run_by_time(3)
-    pump.cleanup()
+from lib import TCA9555, GpiodPin, Tca9555Pin, Stepper, Pump
 ```
 
 ## ADS1115
 
-### 类定义
-
 ```python
-class ADS1115:
-    def __init__(self, bus_num: int = ADS1115_DEFAULT_BUS, addr: int = ADS1115_DEFAULT_ADDR)
+from lib import ADS1115
+from lib.ADS1115 import ADS1115_REG_CONFIG_PGA_4_096V
+
+with ADS1115(i2c_bus=1, addr=0x48) as ads:
+    ads.ping()
+    ads.set_gain(ADS1115_REG_CONFIG_PGA_4_096V)
+    mv = ads.read_voltage(0)
+    print("AIN0 = %s mV" % mv)
 ```
 
-### 公开接口
+常用接口：
 
-- `set_address(addr: int) -> None`
-  - 设置 I2C 地址
-- `set_gain(gain: int) -> None`
-  - 设置 PGA 增益和输入量程
-- `set_channel(channel: int) -> int`
-  - 设置默认通道，返回归一化后的通道号
-- `read_raw(channel: int) -> int`
-  - 读取单端输入原始 ADC 值
-- `read_voltage(channel: int) -> int`
-  - 读取单端输入电压，单位毫伏
-- `read_differential_raw(channel: int) -> int`
-  - 读取差分输入原始 ADC 值
-- `read_differential_voltage(channel: int) -> int`
-  - 读取差分输入电压，单位毫伏
-- `close() -> None`
-  - 关闭 I2C 句柄
+- `ping()`：探测设备是否在线。成功返回 `True`，总线异常时抛出异常。
+- `set_address(addr)`：设置 I2C 地址。`addr` 必须是 `int`，范围 `0x03~0x77`。
+- `set_gain(gain)`：设置 PGA 增益。`gain` 必须是 `ADS1115_REG_CONFIG_PGA_*` 常量之一。
+- `set_channel(channel)`：设置单端输入通道。`channel` 必须是 `int`，范围 `0~3`。返回设置后的通道号。
+- `read_raw(channel)`：读取单端原始 ADC 值。`channel` 必须是 `int`，范围 `0~3`。返回有符号 `int`。
+- `read_voltage(channel)`：读取单端电压值，单位 `mV`。`channel` 必须是 `int`，范围 `0~3`。返回 `int`。
+- `read_differential_raw(channel)`：读取差分原始 ADC 值。`channel` 必须是 `int`，范围 `0~3`，内部会映射到芯片支持的差分组合。
+- `read_differential_voltage(channel)`：读取差分电压值，单位 `mV`。`channel` 规则与 `read_differential_raw` 一致。
+- `close()`：关闭 I2C 句柄。可重复调用。
 
-### 常用量程常量
+构造参数：
+
+- `ADS1115(i2c_bus=1, addr=0x48)`
+- `i2c_bus`：I2C 总线号，必须是 `int >= 0`。
+- `addr`：设备地址，必须是合法 I2C 7 位地址。
+
+增益可选：
+
+```python
+from lib.ADS1115 import (
+    ADS1115_REG_CONFIG_PGA_6_144V,
+    ADS1115_REG_CONFIG_PGA_4_096V,
+    ADS1115_REG_CONFIG_PGA_2_048V,
+    ADS1115_REG_CONFIG_PGA_1_024V,
+    ADS1115_REG_CONFIG_PGA_0_512V,
+    ADS1115_REG_CONFIG_PGA_0_256V,
+)
+```
 
 - `ADS1115_REG_CONFIG_PGA_6_144V`
 - `ADS1115_REG_CONFIG_PGA_4_096V`
@@ -116,165 +69,268 @@ class ADS1115:
 
 ## TCA9555
 
-### 类定义
-
 ```python
-class TCA9555:
-    def __init__(self, i2c_bus: int = TCA9555_DEFAULT_I2C_BUS, addr: int = TCA9555_DEFAULT_ADDR)
+from lib import TCA9555
+
+with TCA9555(i2c_bus=1, addr=0x20) as io:
+    io.ping()
+    io.set_mode([0, 1], "output")
+    io.write(0, True)
+    level = io.read(0, source="output")
+    print(level)
 ```
 
-### 公开接口
+常用接口：
 
-- `ping() -> bool`
-  - 通过一次寄存器读取确认设备在线
-- `set_mode(pin_or_pins: int | list[int], mode: Literal["input", "output"]) -> None`
-  - 设置单个或多个 IO 方向
-- `write(pin_or_pins: int | list[int], value: bool | int) -> None`
-  - 写单个或多个 IO 输出电平
-- `read(pin_or_pins: int | list[int], source: Literal["input", "output"] = "input") -> bool | list[bool]`
-  - 读取单个或多个 IO 电平
-- `write_port(port: int, value: int) -> None`
-  - 按 8 位端口写输出
-- `read_port(port: int, source: Literal["input", "output"] = "input") -> int`
-  - 按 8 位端口读输入或输出锁存值
-- `write_word(value: int) -> None`
-  - 一次写 16 位输出字
-- `read_word(source: Literal["input", "output"] = "input") -> int`
-  - 一次读 16 位输入或输出字
-- `set_polarity(pin_or_pins: int | list[int], inverted: bool | int) -> None`
-  - 设置输入极性反转
-- `close() -> None`
-  - 关闭 I2C 句柄
+- `ping()`：探测设备是否在线。成功时返回 `True`，总线异常时抛出异常。
+- `set_mode(pins, mode)`：设置 IO 方向。`pins` 必须是 `int` 或 `list[int]`，引脚范围 `0~15`，不允许空列表，重复引脚会自动去重。`mode` 只能是 `"input"` 或 `"output"`。
+- `write(pins, value)`：写输出电平。`pins` 规则同 `set_mode`。`value` 必须是 `bool`、`0` 或 `1`。
+- `read(pins, source="input")`：读取一个或多个引脚电平。`source` 只能是 `"input"` 或 `"output"`。如果传单个引脚，返回 `bool`；如果传多个引脚，返回 `list[bool]`。
+- `write_port(port, value)`：按 8 位端口写入。`port` 只能是 `0` 或 `1`。`value` 必须是 `int`，范围 `0x00~0xFF`。
+- `read_port(port, source="input")`：读取 8 位端口值。`port` 只能是 `0` 或 `1`。`source` 只能是 `"input"` 或 `"output"`。返回 `int`。
+- `write_word(value)`：一次写入 16 位输出值。`value` 必须是 `int`，范围 `0x0000~0xFFFF`。
+- `read_word(source="input")`：一次读取 16 位值。`source` 只能是 `"input"` 或 `"output"`。返回 `int`。
+- `set_polarity(pins, inverted)`：设置输入极性翻转。`pins` 规则同 `set_mode`。`inverted` 必须是 `bool`、`0` 或 `1`。
+- `close()`：关闭 I2C 句柄。可重复调用。
+
+构造参数：
+
+- `TCA9555(i2c_bus=1, addr=0x20)`
+- `i2c_bus`：I2C 总线号，建议传合法的 `int >= 0`。
+- `addr`：设备地址，建议传合法 I2C 7 位地址。
 
 ## SoftSPI
 
-### 类型定义
-
 ```python
-PinSpec = tuple[str, int]
+from lib import SoftSPI
+
+with SoftSPI(
+    sclk=("/dev/gpiochip0", 10),
+    mosi=("/dev/gpiochip0", 11),
+    miso=("/dev/gpiochip0", 12),
+    cs=("/dev/gpiochip1", 5),
+) as spi:
+    rx = spi.transfer([0x80, 0x00])
+    print(rx)
 ```
 
-### 类定义
+常用接口：
 
-```python
-class SoftSPI:
-    def __init__(self, sclk: PinSpec, mosi: PinSpec, miso: PinSpec, cs: PinSpec)
-```
+- `cs_low()`：将片选拉低。总线关闭后不可调用。
+- `cs_high()`：将片选拉高。总线关闭后不可调用。
+- `transfer_byte(data)`：发送 1 个字节并接收 1 个字节。`data` 会先转成 `int`，再按 `0xFF` 截断。返回范围 `0~255` 的 `int`。
+- `transfer(data)`：连续发送多个字节。`data` 必须是 `list[int]`。每个元素都会按 `0xFF` 截断。返回长度相同的 `list[int]`。
+- `close()`：释放所有 GPIO line 和 chip 句柄。可重复调用。
 
-### 公开接口
+引脚约束：
 
-- `cs_low() -> None`
-  - 拉低片选
-- `cs_high() -> None`
-  - 拉高片选
-- `transfer_byte(data: int) -> int`
-  - 发送并接收一个字节
-- `transfer(data: list[int]) -> list[int]`
-  - 连续发送并接收多个字节
-- `close() -> None`
-  - 释放 GPIO line 和 chip 资源
-
-### 参数说明
-
-- `sclk` / `mosi` / `miso` / `cs` 都使用 `(chip, line)` 格式
-- 4 根线可以在同一个 `gpiochip`，也可以分散在不同 `gpiochip`
+- `SoftSPI(sclk, mosi, miso, cs)`
+- 每个引脚参数都必须是 `(chip, line)` 二元组。
+- `chip` 必须是非空 `str`，例如 `"/dev/gpiochip1"`。
+- `line` 必须是 `int >= 0`。
 
 ## MAX31865
 
-### 类定义
-
 ```python
-class MAX31865:
-    def __init__(
-        self,
+from lib import SoftSPI, MAX31865
+
+with SoftSPI(
+    sclk=("/dev/gpiochip0", 10),
+    mosi=("/dev/gpiochip0", 11),
+    miso=("/dev/gpiochip0", 12),
+    cs=("/dev/gpiochip1", 5),
+) as spi:
+    with MAX31865(
         spi,
-        rref: float = MAX31865_DEFAULT_RREF,
-        r0: float = MAX31865_DEFAULT_R0,
-        wires: int = MAX31865_DEFAULT_WIRES,
-        filter_frequency: int = MAX31865_DEFAULT_FILTER_FREQUENCY,
-    )
+        rref=430.0,
+        r0=100.0,
+        wires=2,
+        filter_frequency=60,
+    ) as sensor:
+        print(sensor.temperature)
 ```
 
-### 类级转换接口
+直接取值：
 
-- `MAX31865.convert_adc_to_resistance(raw_adc: int, rref: float = 430.0) -> float`
-- `MAX31865.convert_resistance_to_temperature(resistance: float, r0: float = 100.0) -> float`
-- `MAX31865.convert_adc_to_temperature(raw_adc: int, rref: float = 430.0, r0: float = 100.0) -> float`
+- `sensor.temperature`：直接读取当前温度值，单位摄氏度，返回 `float`。
+- `sensor.resistance`：直接读取当前电阻值，返回 `float`。
+- `sensor.raw_rtd`：直接读取当前原始 RTD ADC 值，返回 `int`。
 
-### 实例属性
+常用接口：
 
-- `raw_rtd: int`
-  - 当前 RTD 原始 ADC 值
-- `resistance: float`
-  - 当前 RTD 电阻值
-- `temperature: float`
-  - 当前温度，单位摄氏度
-- `fault_status: int`
-  - 当前故障状态寄存器值
+- `read_fault()`：读取当前故障寄存器，返回 `int`。
+- `clear_faults()`：清除故障标志。
+- `read_register(reg_addr)`：读取单个寄存器。`reg_addr` 应为寄存器地址整数。
+- `read_registers(reg_addr, length)`：连续读取多个寄存器。`reg_addr` 应为整数，`length` 建议为 `int > 0`。返回 `list[int]`。
+- `write_register(reg_addr, value)`：写单个寄存器。`reg_addr` 和 `value` 应为整数，写入时会按 `0xFF` 截断。
+- `write_registers(reg_addr, values)`：连续写多个寄存器。`values` 必须是 `list[int]`，每个元素都会按 `0xFF` 截断。
+- `adc_to_resistance(raw_adc)`：按当前实例的 `rref` 把 ADC 值换算为电阻值。返回 `float`。
+- `resistance_to_temperature(resistance)`：按当前实例的 `r0` 把电阻值换算为摄氏温度。`resistance` 必须大于 `0`。返回 `float`。
+- `calculate_temperature(raw_adc)`：按当前实例的 `rref` 和 `r0`，直接把原始 ADC 值换算为温度。返回 `float`。
+- `close()`：关闭设备。当前实现也会同时关闭底层 `spi`。
 
-### 实例方法
+静态/类方法换算接口：
 
-- `read_fault() -> int`
-- `clear_faults() -> None`
-- `read_register(reg_addr: int) -> int`
-- `read_registers(reg_addr: int, length: int) -> list[int]`
-- `write_register(reg_addr: int, value: int) -> None`
-- `write_registers(reg_addr: int, values: list[int]) -> None`
-- `adc_to_resistance(raw_adc: int) -> float`
-- `resistance_to_temperature(resistance: float) -> float`
-- `calculate_temperature(raw_adc: int) -> float`
-- `close() -> None`
+- `MAX31865.convert_adc_to_resistance(raw_adc, rref=430.0)`：静态方法，不依赖实例。
+- `MAX31865.convert_resistance_to_temperature(resistance, r0=100.0)`：静态方法，不依赖实例。
+- `MAX31865.convert_adc_to_temperature(raw_adc, rref=430.0, r0=100.0)`：类方法，不依赖实例。
 
-## PeriPump
+构造参数：
 
-### 类定义
+- `MAX31865(spi, rref=430.0, r0=100.0, wires=2, filter_frequency=60)`
+- `spi`：不能是 `None`，应传入 `SoftSPI` 实例。
+- `rref`：参考电阻值，通常是板上参考电阻阻值。
+- `r0`：RTD 在 0 摄氏度时的标称电阻，例如 PT100 常用 `100.0`。
+- `wires`：只能是 `2`、`3`、`4`，表示热电阻接线方式。
+- `filter_frequency`：只能是 `50` 或 `60`，表示工频滤波设置。`50` 适用于 50Hz 工频环境，`60` 适用于 60Hz 工频环境。
+
+## pins.py
+
+### OutputPin
+
+- `OutputPin`：输出引脚抽象接口，主要方法是 `write(value)`、`high()`、`low()`、`close()`。
+
+### GpiodPin
 
 ```python
-class PeriPump:
-    def __init__(
-        self,
-        tca9555_instance: TCA9555,
-        pul_chip=PUL_CHIP,
-        pul_line=PUL_LINE,
-        dir_pin=DIR_PIN,
-        ena_pin=ENA_PIN,
+from lib import GpiodPin
+
+pin = GpiodPin(
+    pin=("/dev/gpiochip1", 1),
+    consumer="pump_pul",
+    active_high=True,
+    default_value=False,
+)
+```
+
+构造参数：
+
+- `pin`：必须是 `(chip, line)`，其中 `chip` 是非空 `str`，`line` 是 `int >= 0`。
+- `consumer`：必须是非空 `str`，用于 gpiod 请求资源时标识调用方。
+- `active_high`：`True` 表示逻辑高对应物理高电平，`False` 表示逻辑高会翻转成物理低电平。
+- `default_value`：初始输出值，按逻辑值解释。
+
+常用接口：
+
+- `write(value)`：写逻辑电平。`value` 按 `bool` 解释。
+- `high()`：输出逻辑高。
+- `low()`：输出逻辑低。
+- `close()`：释放 gpiod line 和 chip 资源。
+
+### Tca9555Pin
+
+```python
+from lib import TCA9555, Tca9555Pin
+
+with TCA9555(i2c_bus=1, addr=0x20) as io:
+    pin = Tca9555Pin(
+        device=io,
+        pin=11,
+        active_high=True,
+        initial_value=False,
     )
 ```
 
-### 依赖说明
+构造参数：
 
-- `PUL` 脉冲线通过 `gpiod` 直接控制
-- `DIR` 和 `ENA` 通过 `TCA9555` 控制
-- 所以创建 `PeriPump` 前必须先有一个可用的 `TCA9555` 实例
+- `device`：不能是 `None`，应传入 `TCA9555` 实例。
+- `pin`：必须是 `int`，范围 `0~15`。
+- `active_high`：`True` 表示逻辑高对应物理高电平，`False` 表示逻辑高会翻转成物理低电平。
+- `initial_value`：初始化后立即写入的逻辑值。
 
-### 公开接口
+常用接口：
 
-- `enable() -> None`
-  - 使能电机
-- `disable() -> None`
-  - 关闭电机使能
-- `pulse() -> None`
-  - 发送一个脉冲周期
-- `run(revolutions=None) -> None`
-  - 按圈数运行
-- `run_by_time(seconds=None) -> None`
-  - 按时间运行
-- `set_pin_config(pul_chip=None, pul_line=None, dir_pin=None, ena_pin=None) -> None`
-  - 重新配置 PUL / DIR / ENA 引脚
-- `cleanup() -> None`
-  - 清理资源
-- `subdivision(subdiv_value) -> None`
-  - 设置细分
-- `direction(direction) -> None`
-  - 设置方向，`1` 为正转，`0` 为反转
-- `rpm(rpm_value) -> None`
-  - 设置转速
-- `set_subdivision(subdiv_value) -> None`
-- `set_direction(direction) -> None`
-- `set_rpm(rpm_value) -> None`
+- `write(value)`：写逻辑电平。内部会根据 `active_high` 自动翻转。
+- `high()`：输出逻辑高。
+- `low()`：输出逻辑低。
+- `close()`：标记关闭。注意它不会关闭底层整个 `TCA9555` 设备。
 
-## 使用建议
+## Stepper
 
-- 新代码优先使用 `with` 管理 `ADS1115`、`TCA9555`、`SoftSPI`、`MAX31865`
-- `PeriPump` 当前更接近业务控制类，建议显式调用 `cleanup()`
-- 如果后续继续工程化，建议优先修正 `PeriPump.py`、`MAX31865.py`、`SoftSPI.py` 中现有的中文注释编码问题
+引入示例：
+
+```python
+from lib import TCA9555, GpiodPin, Tca9555Pin, Stepper
+
+with TCA9555(i2c_bus=1, addr=0x20) as io:
+    stepper = Stepper(
+        pul_pin=GpiodPin(("/dev/gpiochip1", 1), consumer="pump_pul"),
+        dir_pin=Tca9555Pin(io, 11),
+        ena_pin=Tca9555Pin(io, 10),
+        steps_per_rev=800,
+    )
+    stepper.set_rpm(300)
+    stepper.set_direction(True)
+    stepper.move_steps(1600)
+```
+
+构造参数：
+
+- `Stepper(pul_pin, dir_pin, ena_pin=None, steps_per_rev=800, dir_high_forward=True, ena_low_enable=True, auto_enable=True)`
+- `pul_pin` 和 `dir_pin` 必须是 `OutputPin` 实例，且不能为 `None`。
+- `ena_pin` 可以是 `None`，也可以是 `OutputPin` 实例。
+- `steps_per_rev` 必须是 `int > 0`。
+- `dir_high_forward`、`ena_low_enable`、`auto_enable` 都是 `bool` 型开关。
+
+核心接口：
+
+- `enable()`：使能驱动输出。如果 `ena_pin is None`，只会修改内部状态。
+- `disable()`：关闭驱动输出。如果 `ena_pin is None`，只会修改内部状态。
+- `set_direction(forward)`：设置方向。`forward` 必须是 `bool`，`True` 表示正转，`False` 表示反转。
+- `set_rpm(rpm)`：设置运行转速。`rpm` 必须是数字且大于 `0`。
+- `set_steps_per_rev(steps_per_rev)`：设置每转步数。`steps_per_rev` 必须是 `int > 0`。
+- `pulse_once()`：输出一个完整脉冲周期。脉冲宽度优先使用 `pulse_high_s/pulse_low_s`，否则根据 `rpm` 和 `steps_per_rev` 自动计算。
+- `move_steps(steps, direction=None)`：按步数运行。`steps` 必须是 `int >= 0`。`direction` 必须是 `bool` 或 `None`。
+- `run_for_time(seconds, direction=None)`：按时长运行。`seconds` 必须是大于 `0` 的数字。`direction` 必须是 `bool` 或 `None`。
+- `run_continuous(direction=None)`：持续运行，直到调用 `stop()` 或 `emergency_stop()`。`direction` 必须是 `bool` 或 `None`。
+- `stop()`：请求当前动作优雅停止。会在运动循环的下一次检查点退出，不会主动立即失能驱动。
+- `emergency_stop()`：立即停止，并调用 `disable()` 关闭驱动输出，适合急停场景。
+- `cleanup()`：先执行 `emergency_stop()`，再关闭绑定的全部引脚。
+
+运行时常改属性：
+
+- `rpm`：当前转速，建议始终保持大于 `0`。
+- `pulse_high_s` / `pulse_low_s`：可选的自定义高低电平持续时间，单位秒。如果只设置一边，另一边会复用同一个值。显式设置时必须是大于 `0` 的数字。
+
+## Pump
+
+引入示例：
+
+```python
+from lib import TCA9555, GpiodPin, Tca9555Pin, Stepper, Pump
+
+with TCA9555(i2c_bus=1, addr=0x20) as io:
+    stepper = Stepper(
+        pul_pin=GpiodPin(("/dev/gpiochip1", 1), consumer="pump_pul"),
+        dir_pin=Tca9555Pin(io, 11),
+        ena_pin=Tca9555Pin(io, 10),
+        steps_per_rev=800,
+    )
+    stepper.set_rpm(300)
+
+    pump = Pump(stepper)
+    pump.dispense_revolutions(2.0)
+    pump.aspirate_for_time(1.5)
+```
+
+构造参数：
+
+- `Pump(driver, dispense_direction="forward", aspirate_direction="reverse", prime_direction=None, purge_direction=None)`
+- `driver` 不能是 `None`，通常应传入 `Stepper` 实例。
+- 所有方向参数都只能是 `"forward"` 或 `"reverse"`。
+- `prime_direction` 为 `None` 时，会跟随 `dispense_direction`。
+- `purge_direction` 为 `None` 时，当前实现也会跟随 `dispense_direction`。
+
+常用接口：
+
+- `dispense_revolutions(revolutions)`：按圈数执行出液。`revolutions` 必须是大于 `0` 的数字。
+- `aspirate_revolutions(revolutions)`：按圈数执行吸液。`revolutions` 规则同上。
+- `dispense_for_time(seconds)`：按时间执行出液。`seconds` 必须是大于 `0` 的数字。
+- `aspirate_for_time(seconds)`：按时间执行吸液。`seconds` 规则同上。
+- `prime(seconds)`：按时间执行预充。`seconds` 必须是大于 `0` 的数字。
+- `purge(seconds)`：按时间执行排空。`seconds` 必须是大于 `0` 的数字。
+- `run_continuous_dispense()`：持续出液，直到停止。
+- `run_continuous_aspirate()`：持续吸液，直到停止。
+- `stop()`：把停止请求转发到底层驱动。
+- `emergency_stop()`：把急停请求转发到底层驱动。
+- `cleanup()`：关闭底层驱动以及关联引脚资源。

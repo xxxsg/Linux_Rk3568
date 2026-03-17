@@ -1,4 +1,4 @@
-"""步进驱动层。"""
+"""Stepper motor driver based on PUL / DIR / ENA pins."""
 
 from __future__ import annotations
 
@@ -9,13 +9,7 @@ from lib.pins import OutputPin
 
 
 class Stepper(object):
-    """PUL / DIR / ENA 型步进驱动器。
-
-    设计原则：
-    - `__init__` 只保留必要参数
-    - 常用运行参数放到对象属性里，方便后续直接修改
-    - 电平极性只在这里处理，上层不用关心接线高低有效
-    """
+    """Drive a stepper motor with pulse, direction, and optional enable pins."""
 
     def __init__(
         self,
@@ -27,31 +21,17 @@ class Stepper(object):
         ena_low_enable: bool = True,
         auto_enable: bool = True,
     ) -> None:
-        """初始化步进驱动器。
-
-        参数：
-            pul_pin: 脉冲输出脚，接驱动器 PUL
-            dir_pin: 方向输出脚，接驱动器 DIR
-            ena_pin: 使能输出脚，接驱动器 ENA，可选
-            steps_per_rev: 当前每转步数，默认 800
-            dir_high_forward: DIR 高电平是否表示正转
-            ena_low_enable: ENA 低电平是否表示使能
-            auto_enable: 运动前自动使能，运动后自动失能
-        """
         if pul_pin is None or dir_pin is None:
-            raise ValueError("pul_pin 和 dir_pin 不能为空")
+            raise ValueError("pul_pin and dir_pin cannot be None")
 
         self.pul_pin = pul_pin
         self.dir_pin = dir_pin
         self.ena_pin = ena_pin
 
-        # 下面这些参数都可以在初始化后直接改，比如：
-        # stepper.rpm = 200
-        # stepper.default_revs = 2
+        # 这里保存“电机一圈需要多少步”，上层按圈数换算时会用到。
         self.steps_per_rev = self._check_pos_int(steps_per_rev, "steps_per_rev")
+        # 默认按转速自动计算脉冲宽度，也支持后面手动覆盖 pulse_high_s/pulse_low_s。
         self.rpm = 300.0
-        self.default_revs = 10.0
-        self.default_seconds = 3.0
         self.pulse_high_s = None
         self.pulse_low_s = None
 
@@ -68,27 +48,27 @@ class Stepper(object):
 
     def _check_pos_number(self, value, name: str) -> float:
         if not isinstance(value, (int, float)):
-            raise TypeError("%s 必须是数字" % name)
+            raise TypeError("%s must be a number" % name)
         if value <= 0:
-            raise ValueError("%s 必须大于 0" % name)
+            raise ValueError("%s must be > 0" % name)
         return float(value)
 
     def _check_pos_int(self, value, name: str) -> int:
         if not isinstance(value, int):
-            raise TypeError("%s 必须是整数" % name)
+            raise TypeError("%s must be an int" % name)
         if value <= 0:
-            raise ValueError("%s 必须大于 0" % name)
+            raise ValueError("%s must be > 0" % name)
         return value
 
     def _check_nonneg_int(self, value, name: str) -> int:
         if not isinstance(value, int):
-            raise TypeError("%s 必须是整数" % name)
+            raise TypeError("%s must be an int" % name)
         if value < 0:
-            raise ValueError("%s 不能小于 0" % name)
+            raise ValueError("%s must be >= 0" % name)
         return value
 
     def _pulse_times(self) -> Tuple[float, float]:
-        """计算一个脉冲的高低电平时间。"""
+        # 如果手动指定了高/低电平持续时间，就优先按手动值输出脉冲。
         if self.pulse_high_s is not None or self.pulse_low_s is not None:
             high_s = self.pulse_high_s
             low_s = self.pulse_low_s
@@ -99,6 +79,7 @@ class Stepper(object):
                 low_s = self._check_pos_number(high_s, "pulse_high_s")
             return float(high_s), float(low_s)
 
+        # 否则根据转速和每转步数，自动推导一个 50% 占空比脉冲。
         rpm = self._check_pos_number(self.rpm, "rpm")
         steps_per_rev = self._check_pos_int(self.steps_per_rev, "steps_per_rev")
         period = 60.0 / (rpm * steps_per_rev)
@@ -113,6 +94,7 @@ class Stepper(object):
 
     def _set_ena_pin(self, enabled: bool) -> None:
         if self.ena_pin is None:
+            # 没有接 ENA 引脚时，只维护内部状态，不实际写硬件。
             self._enabled = enabled
             return
 
@@ -123,6 +105,7 @@ class Stepper(object):
         self._enabled = enabled
 
     def _start(self, direction: Optional[bool]) -> None:
+        # 每次新动作开始时，都清掉上一次的停止标记。
         self._stop = False
         self._estop = False
         if direction is not None:
@@ -138,45 +121,24 @@ class Stepper(object):
         return self._stop or self._estop
 
     def enable(self) -> None:
-        """使能驱动器。"""
         self._set_ena_pin(True)
 
     def disable(self) -> None:
-        """失能驱动器。"""
         self._set_ena_pin(False)
 
     def set_direction(self, forward: bool) -> None:
-        """设置方向。
-
-        参数：
-            forward: True 表示正转，False 表示反转
-        """
         if not isinstance(forward, bool):
-            raise TypeError("forward 必须是 bool")
+            raise TypeError("forward must be bool")
         self._set_dir_pin(forward)
 
     def set_rpm(self, rpm: float) -> None:
-        """设置转速。"""
         self.rpm = self._check_pos_number(rpm, "rpm")
 
     def set_steps_per_rev(self, steps_per_rev: int) -> None:
-        """设置每转步数。"""
         self.steps_per_rev = self._check_pos_int(steps_per_rev, "steps_per_rev")
 
-    def set_subdivision(self, subdivision: int) -> None:
-        """兼容旧命名，等同于设置每转步数。"""
-        self.set_steps_per_rev(subdivision)
-
-    def set_default_revs(self, revs: float) -> None:
-        """设置默认圈数。"""
-        self.default_revs = self._check_pos_number(revs, "default_revs")
-
-    def set_default_seconds(self, seconds: float) -> None:
-        """设置默认运行时间。"""
-        self.default_seconds = self._check_pos_number(seconds, "default_seconds")
-
     def pulse_once(self) -> None:
-        """输出一个完整脉冲。"""
+        # 一个完整步进脉冲 = 拉高 + 等待 + 拉低 + 等待。
         high_s, low_s = self._pulse_times()
         self.pul_pin.high()
         time.sleep(high_s)
@@ -184,20 +146,15 @@ class Stepper(object):
         time.sleep(low_s)
 
     def move_steps(self, steps: int, direction: Optional[bool] = None) -> None:
-        """按步数运行。
-
-        参数：
-            steps: 运行步数
-            direction: 可选，临时指定方向
-        """
         total_steps = self._check_nonneg_int(steps, "steps")
         if direction is not None and not isinstance(direction, bool):
-            raise TypeError("direction 必须是 bool 或 None")
+            raise TypeError("direction must be bool or None")
 
         self._start(direction)
         try:
             index = 0
             while index < total_steps:
+                # stop/emergency_stop 都是在循环检查点生效。
                 if self._should_stop():
                     break
                 self.pulse_once()
@@ -205,25 +162,15 @@ class Stepper(object):
         finally:
             self._finish()
 
-    def move_revolutions(self, revolutions: Optional[float] = None, direction: Optional[bool] = None) -> None:
-        """按圈数运行。"""
-        if revolutions is None:
-            revolutions = self.default_revs
-        revs = self._check_pos_number(revolutions, "revolutions")
-        steps = int(round(revs * self._check_pos_int(self.steps_per_rev, "steps_per_rev")))
-        self.move_steps(steps, direction=direction)
-
-    def run_for_time(self, seconds: Optional[float] = None, direction: Optional[bool] = None) -> None:
-        """按时间运行。"""
-        if seconds is None:
-            seconds = self.default_seconds
+    def run_for_time(self, seconds: float, direction: Optional[bool] = None) -> None:
         duration = self._check_pos_number(seconds, "seconds")
         if direction is not None and not isinstance(direction, bool):
-            raise TypeError("direction 必须是 bool 或 None")
+            raise TypeError("direction must be bool or None")
 
         self._start(direction)
         deadline = time.time() + duration
         try:
+            # 这里不是按步数结束，而是按截止时间结束。
             while time.time() < deadline:
                 if self._should_stop():
                     break
@@ -232,9 +179,8 @@ class Stepper(object):
             self._finish()
 
     def run_continuous(self, direction: Optional[bool] = None) -> None:
-        """持续运行，直到调用 stop 或 emergency_stop。"""
         if direction is not None and not isinstance(direction, bool):
-            raise TypeError("direction 必须是 bool 或 None")
+            raise TypeError("direction must be bool or None")
 
         self._start(direction)
         try:
@@ -244,17 +190,17 @@ class Stepper(object):
             self._finish()
 
     def stop(self) -> None:
-        """请求当前动作停止。"""
+        # 正常停止：只设置标记，让当前动作在下一次检查点退出。
         self._stop = True
 
     def emergency_stop(self) -> None:
-        """紧急停止。"""
+        # 急停：除了停止标记，还会立刻失能驱动。
         self._stop = True
         self._estop = True
         self.disable()
 
     def cleanup(self) -> None:
-        """释放资源。"""
+        # 清理前先急停，避免释放资源时电机还在跑。
         self.emergency_stop()
         for pin in (self.pul_pin, self.dir_pin, self.ena_pin):
             if pin is None:
@@ -263,6 +209,3 @@ class Stepper(object):
                 pin.close()
             except Exception:
                 pass
-
-
-StepperDriver = Stepper
