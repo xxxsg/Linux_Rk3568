@@ -188,3 +188,9 @@ if __name__ == "__main__":
     # pump_control(direction=0, duration=3000)
     # tca9555.set_tca9555_pin_low(PI_ANL_WAST)
   
+
+
+# 初始化ADS1555 读取0-3的电压进行输出
+# 初始化MAX31865 读取温度
+# 使用tca955的pin依次打开0-10
+# 初始化一个pup正转3s 反转5s，加个input，回车再急停

@@ -1,4 +1,4 @@
-"""Peristaltic pump wrapper built on top of Stepper."""
+"""基于 Stepper 的蠕动泵封装。"""
 
 from __future__ import annotations
 
@@ -8,32 +8,37 @@ if TYPE_CHECKING:
     from lib.stepper import Stepper
 
 
-class Pump(object):
-    """Expose pump-oriented actions using a lower-level stepper driver."""
+class Pump:
+    """基于底层步进电机驱动，提供更贴近泵语义的操作接口。
+
+    Stepper 负责硬件层方向极性定义；
+    Pump 只关心业务语义里的“吸液方向”。
+    排液方向始终由吸液方向自动取反，避免出现互相矛盾的配置。
+    """
 
     def __init__(
         self,
         driver: "Stepper",
-        dispense_direction: str = "forward",
         aspirate_direction: str = "reverse",
-        prime_direction: str | None = None,
-        purge_direction: str | None = None,
     ) -> None:
+        """初始化泵对象。
+
+        `aspirate_direction` 表示“吸液”时电机应使用的方向：
+        - `"forward"`: direction=True 时表示吸液
+        - `"reverse"`: direction=False 时表示吸液
+
+        “排液/出液”方向会自动使用相反方向，不需要单独配置。
+        """
         if driver is None:
             raise ValueError("driver cannot be None")
 
         self._driver = driver
-        # Pump 不自己发脉冲，只负责把“出液/吸液”语义映射成电机方向。
-        self._dispense_direction = self._normalize_direction(dispense_direction, "dispense_direction")
-        self._aspirate_direction = self._normalize_direction(aspirate_direction, "aspirate_direction")
-        if prime_direction is None:
-            prime_direction = dispense_direction
-        if purge_direction is None:
-            purge_direction = dispense_direction
-        self._prime_direction = self._normalize_direction(prime_direction, "prime_direction")
-        self._purge_direction = self._normalize_direction(purge_direction, "purge_direction")
+        self._aspirate_direction = self._parse_direction(aspirate_direction, "aspirate_direction")
+        # 排液方向固定与吸液方向相反，避免配置出互相冲突的两个方向。
+        self._dispense_direction = not self._aspirate_direction
 
-    def _normalize_direction(self, direction: str, name: str) -> bool:
+    def _parse_direction(self, direction: str, name: str) -> bool:
+        """将字符串方向转换为步进驱动使用的布尔方向值。"""
         if direction == "forward":
             return True
         if direction == "reverse":
@@ -41,6 +46,7 @@ class Pump(object):
         raise ValueError("%s must be 'forward' or 'reverse'" % name)
 
     def _normalize_revolutions(self, revolutions: float) -> float:
+        """校验并规范化圈数参数。"""
         if not isinstance(revolutions, (int, float)):
             raise TypeError("revolutions must be a number")
         if revolutions <= 0:
@@ -48,51 +54,87 @@ class Pump(object):
         return float(revolutions)
 
     def _normalize_seconds(self, seconds: float) -> float:
+        """校验并规范化运行时长参数。"""
         if not isinstance(seconds, (int, float)):
             raise TypeError("seconds must be a number")
         if seconds <= 0:
             raise ValueError("seconds must be > 0")
         return float(seconds)
 
-    def _move_revolutions(self, revolutions: float, direction: bool) -> None:
-        # Pump 负责“圈数 -> 步数”换算，再下发给 Stepper 的核心接口 move_steps。
-        steps = int(round(self._normalize_revolutions(revolutions) * self._driver.steps_per_rev))
-        self._driver.move_steps(steps=steps, direction=direction)
+    def dispense_steps(self, steps: int) -> None:
+        """按步数执行排液。
 
-    def _run_for_time(self, seconds: float, direction: bool) -> None:
-        # 时间语义仍然复用 Stepper 的底层能力，只是这里补上泵的业务方向。
-        self._driver.run_for_time(seconds=self._normalize_seconds(seconds), direction=direction)
+        参数:
+            steps: 排液对应的步数，必须大于等于 0
+        """
+        if not isinstance(steps, int):
+            raise TypeError("steps must be an int")
+        if steps < 0:
+            raise ValueError("steps must be >= 0")
+        self._driver.move_steps(steps=steps, direction=self._dispense_direction)
+
+    def aspirate_steps(self, steps: int) -> None:
+        """按步数执行吸液。
+
+        参数:
+            steps: 吸液对应的步数，必须大于等于 0
+        """
+        if not isinstance(steps, int):
+            raise TypeError("steps must be an int")
+        if steps < 0:
+            raise ValueError("steps must be >= 0")
+        self._driver.move_steps(steps=steps, direction=self._aspirate_direction)
 
     def dispense_revolutions(self, revolutions: float) -> None:
-        self._move_revolutions(revolutions, self._dispense_direction)
+        """按圈数执行排液。
+
+        参数:
+            revolutions: 排液圈数，必须大于 0
+        """
+        steps = int(round(self._normalize_revolutions(revolutions) * self._driver.steps_per_rev))
+        self._driver.move_steps(steps=steps, direction=self._dispense_direction)
 
     def aspirate_revolutions(self, revolutions: float) -> None:
-        self._move_revolutions(revolutions, self._aspirate_direction)
+        """按圈数执行吸液。
 
-    def dispense_for_time(self, seconds: float) -> None:
-        self._run_for_time(seconds, self._dispense_direction)
+        参数:
+            revolutions: 吸液圈数，必须大于 0
+        """
+        steps = int(round(self._normalize_revolutions(revolutions) * self._driver.steps_per_rev))
+        self._driver.move_steps(steps=steps, direction=self._aspirate_direction)
 
-    def aspirate_for_time(self, seconds: float) -> None:
-        self._run_for_time(seconds, self._aspirate_direction)
+    def dispense_time(self, seconds: float) -> None:
+        """按时长执行排液。
 
-    def prime(self, seconds: float) -> None:
-        self._run_for_time(seconds, self._prime_direction)
+        参数:
+            seconds: 排液时长，单位秒，必须大于 0
+        """
+        self._driver.run_for_time(seconds=self._normalize_seconds(seconds), direction=self._dispense_direction)
 
-    def purge(self, seconds: float) -> None:
-        self._run_for_time(seconds, self._purge_direction)
+    def aspirate_time(self, seconds: float) -> None:
+        """按时长执行吸液。
 
-    def run_continuous_dispense(self) -> None:
-        # 持续运行场景下，由 Stepper 自己处理 stop/emergency_stop。
+        参数:
+            seconds: 吸液时长，单位秒，必须大于 0
+        """
+        self._driver.run_for_time(seconds=self._normalize_seconds(seconds), direction=self._aspirate_direction)
+
+    def dispense_continuous(self) -> None:
+        """持续排液，直到外部调用停止。"""
         self._driver.run_continuous(direction=self._dispense_direction)
 
-    def run_continuous_aspirate(self) -> None:
+    def aspirate_continuous(self) -> None:
+        """持续吸液，直到外部调用停止。"""
         self._driver.run_continuous(direction=self._aspirate_direction)
 
     def stop(self) -> None:
+        """请求当前动作尽快平滑停止。"""
         self._driver.stop()
 
     def emergency_stop(self) -> None:
+        """立即急停，并关闭底层电机使能。"""
         self._driver.emergency_stop()
 
     def cleanup(self) -> None:
+        """清理底层驱动及相关引脚资源。"""
         self._driver.cleanup()

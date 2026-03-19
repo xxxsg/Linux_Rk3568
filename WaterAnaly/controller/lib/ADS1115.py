@@ -1,4 +1,4 @@
-"""ADS1115 I2C ADC driver."""
+"""ADS1115 I2C ADC 驱动。"""
 
 from __future__ import annotations
 
@@ -90,15 +90,13 @@ ADS1115_CONVERSION_DELAY_S = 0.1
 
 
 class ADS1115:
-    """ADS1115 驱动。"""
+    """ADS1115 I2C ADC 驱动。
+
+    提供单端和差分采样，并将原始 ADC 值换算为毫伏。
+    """
 
     def __init__(self, i2c_bus: int = ADS1115_DEFAULT_BUS, addr: int = ADS1115_DEFAULT_ADDR):
-        """初始化 ADS1115。
-
-        参数:
-            bus_num: I2C 总线号
-            addr: I2C 地址
-        """
+        """初始化 ADS1115 设备并打开指定 I2C 总线。"""
         if not isinstance(i2c_bus, int):
             raise TypeError("i2c_bus must be an integer")
         if i2c_bus < 0:
@@ -123,32 +121,12 @@ class ADS1115:
         self.close()
 
     def _ensure_open(self) -> None:
+        """确保底层 I2C 设备仍然可用。"""
         if self._closed or self.bus is None:
             raise RuntimeError("ADS1115 device is closed")
 
-    def _build_single_config(self, channel: int) -> list:
-        return [
-            ADS1115_REG_CONFIG_OS_SINGLE
-            | ADS1115_SINGLE_MUX_MAP[channel]
-            | self.gain
-            | ADS1115_REG_CONFIG_MODE_CONTIN,
-            ADS1115_REG_CONFIG_DR_128SPS | ADS1115_REG_CONFIG_CQUE_NONE,
-        ]
-
-    def _build_differential_config(self, channel: int) -> list:
-        return [
-            ADS1115_REG_CONFIG_OS_SINGLE
-            | ADS1115_DIFFERENTIAL_MUX_MAP[channel]
-            | self.gain
-            | ADS1115_REG_CONFIG_MODE_CONTIN,
-            ADS1115_REG_CONFIG_DR_128SPS | ADS1115_REG_CONFIG_CQUE_NONE,
-        ]
-
-    def _write_config(self, config: list) -> None:
-        self._ensure_open()
-        self.bus.write_i2c_block_data(self.addr, ADS1115_REG_POINTER_CONFIG, config)
-
     def _read_conversion(self) -> int:
+        """读取转换寄存器，并转成有符号 16 位结果。"""
         self._ensure_open()
         data = self.bus.read_i2c_block_data(self.addr, ADS1115_REG_POINTER_CONVERT, 2)
         raw = (data[0] << 8) | data[1]
@@ -156,17 +134,39 @@ class ADS1115:
             raw -= 65536
         return raw
 
+    def _build_config(self, channel: int, *, differential: bool) -> list[int]:
+        """按通道和采样模式拼出配置寄存器的两个字节。"""
+        mux_map = ADS1115_DIFFERENTIAL_MUX_MAP if differential else ADS1115_SINGLE_MUX_MAP
+        return [
+            ADS1115_REG_CONFIG_OS_SINGLE | mux_map[channel] | self.gain | ADS1115_REG_CONFIG_MODE_SINGLE,
+            ADS1115_REG_CONFIG_DR_128SPS | ADS1115_REG_CONFIG_CQUE_NONE,
+        ]
+
+    def _start_conversion(self, channel: int, *, differential: bool) -> None:
+        """写入配置寄存器并等待一次转换完成。"""
+        self._ensure_open()
+        config = self._build_config(channel, differential=differential)
+        self.bus.write_i2c_block_data(self.addr, ADS1115_REG_POINTER_CONFIG, config)
+        time.sleep(ADS1115_CONVERSION_DELAY_S)
+
+    def _read_channel_raw(self, channel: int, *, differential: bool) -> int:
+        """统一封装通道选择、启动转换和读取原始值。"""
+        channel = self.set_channel(channel)
+        self._start_conversion(channel, differential=differential)
+        return self._read_conversion()
+
     def _raw_to_voltage_mv(self, raw_value: int) -> int:
+        """根据当前增益把原始值换算为毫伏。"""
         return int(float(raw_value) * self.coefficient)
 
     def ping(self) -> bool:
-        # 通过一次最小读操作确认设备在线。
+        """尝试读取设备，成功则说明 I2C 通信正常。"""
         self._ensure_open()
         self.bus.read_i2c_block_data(self.addr, ADS1115_REG_POINTER_CONVERT, 2)
         return True
 
     def set_address(self, addr: int) -> None:
-        """设置 I2C 地址。"""
+        """更新当前设备地址，不重新打开总线。"""
         if not isinstance(addr, int):
             raise TypeError("addr must be an integer")
         if addr < 0x03 or addr > 0x77:
@@ -174,7 +174,7 @@ class ADS1115:
         self.addr = addr
 
     def set_gain(self, gain: int) -> None:
-        """设置 PGA 增益。"""
+        """设置 PGA 增益，同时更新原始值到毫伏的换算系数。"""
         if not isinstance(gain, int):
             raise TypeError("gain must be an integer")
         if gain not in ADS1115_GAIN_TO_COEFFICIENT:
@@ -183,7 +183,7 @@ class ADS1115:
         self.coefficient = ADS1115_GAIN_TO_COEFFICIENT[self.gain]
 
     def set_channel(self, channel: int) -> int:
-        """设置默认通道。"""
+        """设置当前通道编号，范围为 0~3。"""
         if not isinstance(channel, int):
             raise TypeError("channel must be an integer")
         if channel not in ADS1115_SINGLE_MUX_MAP:
@@ -192,29 +192,25 @@ class ADS1115:
         return self.channel
 
     def read_raw(self, channel: int) -> int:
-        """读取单端原始值。"""
-        channel = self.set_channel(channel)
-        self._write_config(self._build_single_config(channel))
-        time.sleep(ADS1115_CONVERSION_DELAY_S)
-        return self._read_conversion()
+        """读取单端通道的原始 ADC 值。"""
+        return self._read_channel_raw(channel, differential=False)
 
     def read_voltage(self, channel: int) -> int:
-        """读取单端电压，单位 mV。"""
-        return self._raw_to_voltage_mv(self.read_raw(channel))
+        """读取单端通道电压，返回毫伏。"""
+        raw_value = self._read_channel_raw(channel, differential=False)
+        return self._raw_to_voltage_mv(raw_value)
 
     def read_differential_raw(self, channel: int) -> int:
-        """读取差分原始值。"""
-        channel = self.set_channel(channel)
-        self._write_config(self._build_differential_config(channel))
-        time.sleep(ADS1115_CONVERSION_DELAY_S)
-        return self._read_conversion()
+        """读取差分通道的原始 ADC 值。"""
+        return self._read_channel_raw(channel, differential=True)
 
     def read_differential_voltage(self, channel: int) -> int:
-        """读取差分电压，单位 mV。"""
-        return self._raw_to_voltage_mv(self.read_differential_raw(channel))
+        """读取差分通道电压，返回毫伏。"""
+        raw_value = self._read_channel_raw(channel, differential=True)
+        return self._raw_to_voltage_mv(raw_value)
 
     def close(self) -> None:
-        """关闭 I2C 连接。"""
+        """关闭 I2C 句柄，重复调用安全。"""
         if self._closed:
             return
 

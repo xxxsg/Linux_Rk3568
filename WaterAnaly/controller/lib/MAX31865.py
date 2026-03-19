@@ -1,4 +1,4 @@
-"""MAX31865 RTD temperature sensor driver."""
+"""MAX31865 RTD 温度传感器驱动。"""
 
 from __future__ import annotations
 
@@ -43,15 +43,36 @@ MAX31865_RTD_B = -5.775e-7
 
 
 class MAX31865:
-    """MAX31865 驱动。"""
+    """MAX31865 RTD 温度传感器驱动。
+
+    支持原始 ADC、电阻值和温度值读取，也提供静态换算工具方法。
+    """
 
     @staticmethod
     def convert_adc_to_resistance(raw_adc: int, rref: float = MAX31865_DEFAULT_RREF) -> float:
+        """将 RTD 原始 ADC 值换算为电阻值。
+
+        参数:
+            raw_adc: 原始 ADC 值
+            rref: 参考电阻阻值
+
+        返回:
+            float: 换算后的 RTD 电阻值
+        """
         adc_value = int(raw_adc) & 0x7FFF
         return adc_value * float(rref) / 32768.0
 
     @staticmethod
     def convert_resistance_to_temperature(resistance: float, r0: float = MAX31865_DEFAULT_R0) -> float:
+        """根据 PT100/PT1000 的 Callendar-Van Dusen 公式换算温度。
+
+        参数:
+            resistance: RTD 当前电阻值
+            r0: RTD 在 0 摄氏度时的标称电阻
+
+        返回:
+            float: 摄氏温度
+        """
         resistance = float(resistance)
         r0 = float(r0)
 
@@ -81,6 +102,16 @@ class MAX31865:
         rref: float = MAX31865_DEFAULT_RREF,
         r0: float = MAX31865_DEFAULT_R0,
     ) -> float:
+        """将原始 ADC 值直接换算为摄氏温度。
+
+        参数:
+            raw_adc: 原始 ADC 值
+            rref: 参考电阻阻值
+            r0: RTD 在 0 摄氏度时的标称电阻
+
+        返回:
+            float: 摄氏温度
+        """
         resistance = cls.convert_adc_to_resistance(raw_adc, rref)
         return cls.convert_resistance_to_temperature(resistance, r0)
 
@@ -92,7 +123,15 @@ class MAX31865:
         wires: int = MAX31865_DEFAULT_WIRES,
         filter_frequency: int = MAX31865_DEFAULT_FILTER_FREQUENCY,
     ) -> None:
-        """初始化 MAX31865。"""
+        """初始化 MAX31865，并按线制与工频滤波参数完成配置。
+
+        参数:
+            spi: 底层 SoftSPI 对象
+            rref: 参考电阻阻值
+            r0: RTD 在 0 摄氏度时的标称电阻
+            wires: RTD 线制，只能为 2、3、4
+            filter_frequency: 工频滤波设置，只能为 50 或 60
+        """
         if spi is None:
             raise ValueError("spi instance is required")
         if wires not in (2, 3, 4):
@@ -110,111 +149,111 @@ class MAX31865:
         self._configure()
 
     def _ensure_open(self) -> None:
+        """确保设备尚未关闭。"""
         if self._closed:
             raise RuntimeError("MAX31865 device is closed")
 
-    def _configure(self) -> None:
+    def _build_config_value(self) -> int:
+        """生成配置寄存器默认值。"""
         config = MAX31865_CONFIG_BIAS
         if self.wires == 3:
             config |= MAX31865_CONFIG_3WIRE
         if self.filter_frequency == 50:
             config |= MAX31865_CONFIG_FILTER_50HZ
-        self.write_register(MAX31865_CONFIG_REG, config)
+        return config
+
+    def _spi_read(self, command: List[int]) -> List[int]:
+        """执行一次 SPI 读事务。"""
+        self._ensure_open()
+        self.spi.cs_low()
+        try:
+            return self.spi.transfer(command)
+        finally:
+            self.spi.cs_high()
+
+    def _spi_write(self, command: List[int]) -> None:
+        """执行一次 SPI 写事务。"""
+        self._ensure_open()
+        self.spi.cs_low()
+        try:
+            self.spi.transfer(command)
+        finally:
+            self.spi.cs_high()
+
+    def _configure(self) -> None:
+        """写入基础配置，并清除历史故障标志。"""
+        self.write_register(MAX31865_CONFIG_REG, self._build_config_value())
         self.clear_faults()
 
-    def _read_u8(self, reg_addr: int) -> int:
-        self._ensure_open()
-        self.spi.cs_low()
-        try:
-            rx_data = self.spi.transfer([reg_addr & 0x7F, 0x00])
-            return rx_data[1]
-        finally:
-            self.spi.cs_high()
-
-    def _read_many(self, reg_addr: int, length: int) -> List[int]:
-        self._ensure_open()
-        if length <= 0:
-            return []
-
-        self.spi.cs_low()
-        try:
-            rx_data = self.spi.transfer([reg_addr & 0x7F] + ([0x00] * length))
-            return rx_data[1:]
-        finally:
-            self.spi.cs_high()
-
-    def _write_u8(self, reg_addr: int, value: int) -> None:
-        self._ensure_open()
-        self.spi.cs_low()
-        try:
-            self.spi.transfer([(reg_addr | 0x80) & 0xFF, value & 0xFF])
-        finally:
-            self.spi.cs_high()
-
-    def _read_rtd(self) -> int:
-        msb, lsb = self._read_many(MAX31865_RTD_MSB_REG, 2)
-        return ((msb << 8) | lsb) >> 1
-
-    @property
-    def raw_rtd(self) -> int:
-        return self._read_rtd()
-
-    @property
-    def resistance(self) -> float:
-        return self.adc_to_resistance(self.raw_rtd)
-
-    @property
-    def temperature(self) -> float:
-        return self.resistance_to_temperature(self.resistance)
-
-    @property
-    def fault_status(self) -> int:
-        return self._read_u8(MAX31865_FAULT_STATUS_REG)
-
     def read_fault(self) -> int:
-        return self.fault_status
+        """读取故障状态寄存器。"""
+        return self.read_register(MAX31865_FAULT_STATUS_REG)
+
+    def read_raw_rtd(self) -> int:
+        """读取 RTD 原始 15 位 ADC 结果。"""
+        data = self.read_registers(MAX31865_RTD_MSB_REG, 2)
+        return ((data[0] << 8) | data[1]) >> 1
+
+    def read_resistance(self) -> float:
+        """读取 RTD 当前电阻值。"""
+        raw_rtd = self.read_raw_rtd()
+        return self.convert_adc_to_resistance(raw_rtd, self.rref)
+
+    def read_temperature(self) -> float:
+        """读取 RTD 当前温度，单位为摄氏度。"""
+        raw_rtd = self.read_raw_rtd()
+        return self.convert_adc_to_temperature(raw_rtd, self.rref, self.r0)
 
     def clear_faults(self) -> None:
-        config = self._read_u8(MAX31865_CONFIG_REG)
-        self._write_u8(MAX31865_CONFIG_REG, config | MAX31865_CONFIG_FAULT_CLEAR)
+        """清除故障状态位。"""
+        config = self.read_register(MAX31865_CONFIG_REG)
+        self.write_register(MAX31865_CONFIG_REG, config | MAX31865_CONFIG_FAULT_CLEAR)
 
     def read_register(self, reg_addr: int) -> int:
-        return self._read_u8(reg_addr)
+        """读取单个寄存器。"""
+        command = [reg_addr & 0x7F, 0x00]
+        response = self._spi_read(command)
+        return response[1]
 
     def read_registers(self, reg_addr: int, length: int) -> List[int]:
-        return self._read_many(reg_addr, length)
+        """从指定寄存器开始连续读取多个字节。
+
+        返回:
+            list[int]: 读取到的寄存器字节列表
+        """
+        if length <= 0:
+            return []
+        command = [reg_addr & 0x7F] + ([0x00] * length)
+        response = self._spi_read(command)
+        return response[1:]
 
     def write_register(self, reg_addr: int, value: int) -> None:
-        self._write_u8(reg_addr, value)
+        """写入单个寄存器。"""
+        command = [(reg_addr | 0x80) & 0xFF, value & 0xFF]
+        self._spi_write(command)
 
     def write_registers(self, reg_addr: int, values: List[int]) -> None:
-        self._ensure_open()
+        """从指定寄存器开始连续写入多个字节。"""
         if not isinstance(values, list):
             raise TypeError("values must be a list of int")
-
-        self.spi.cs_low()
-        try:
-            self.spi.transfer([(reg_addr | 0x80) & 0xFF] + [value & 0xFF for value in values])
-        finally:
-            self.spi.cs_high()
-
-    def adc_to_resistance(self, raw_adc: int) -> float:
-        return self.convert_adc_to_resistance(raw_adc, self.rref)
-
-    def resistance_to_temperature(self, resistance: float) -> float:
-        return self.convert_resistance_to_temperature(resistance, self.r0)
-
-    def calculate_temperature(self, raw_adc: int) -> float:
-        return self.convert_adc_to_temperature(raw_adc, self.rref, self.r0)
+        command = [(reg_addr | 0x80) & 0xFF] + [value & 0xFF for value in values]
+        self._spi_write(command)
 
     def close(self) -> None:
+        """关闭底层 SPI 设备。
+
+        注意:
+            该操作会调用传入 `SoftSPI` 实例的 `close()`。
+        """
         if self._closed:
             return
         self.spi.close()
         self._closed = True
 
     def __enter__(self) -> "MAX31865":
+        """支持 with 上下文管理。"""
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        """退出上下文时自动关闭设备。"""
         self.close()
