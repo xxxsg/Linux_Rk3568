@@ -244,6 +244,8 @@ class HardwareContext:
     digest_optics: DigestOptics
     spi: Optional[Any] = None
     temp_sensor: Optional[MAX31865Driver] = None
+    tca_valve: Optional[TCA9555Driver] = None
+    tca_ctrl: Optional[TCA9555Driver] = None
 
     def shutdown(self):
         # 统一下电/释放资源，防止退出时硬件仍处于工作状态
@@ -266,7 +268,8 @@ def create_hardware_context():
     - 业务层控制对象（阀门、泵、光学、温控）
     """
     i2c = busio.I2C(board.SCL, board.SDA)
-    tca = TCA9555Driver(i2c, TCA9555_I2C_ADDR)
+    tca_valve = TCA9555Driver(i2c, TCA9555_VALVE_I2C_ADDR)
+    tca_ctrl = TCA9555Driver(i2c, TCA9555_CTRL_I2C_ADDR)
     ads = ADS1115Driver(i2c, ADS1115_I2C_ADDR)
 
     spi = busio.SPI(board.SCK, board.MOSI, board.MISO)
@@ -280,9 +283,9 @@ def create_hardware_context():
 
     return HardwareContext(
         bus=i2c,
-        valve=ValveCtrl(tca, VALVE_PIN_MAP),
+        valve=ValveCtrl(tca_valve, VALVE_PIN_MAP),
         pump=StepperPump(
-            tca,
+            tca_ctrl,
             pul_pin=PUMP_PUL_PIN,
             dir_pin=PUMP_DIR_PIN,
             ena_pin=PUMP_ENA_PIN,
@@ -294,4 +297,6 @@ def create_hardware_context():
         digest_optics=DigestOptics(ads),
         spi=spi,
         temp_sensor=temp_sensor,
+        tca_valve=tca_valve,
+        tca_ctrl=tca_ctrl,
     )

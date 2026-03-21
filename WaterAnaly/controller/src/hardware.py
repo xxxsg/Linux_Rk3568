@@ -23,6 +23,7 @@ from lib.stepper import Stepper
 # 这里直接沿用 test.py 中已经验证过的硬件定义，便于保持一致。
 TCA9555_BUS = 1
 TCA9555_ADDR = 0x20
+TCA9555_CTRL_ADDR = 0x21
 ADS1115_BUS = 1
 ADS1115_ADDR = 0x48
 
@@ -38,8 +39,8 @@ PIN_REAGENT_C = 7
 PIN_CLEAN_WASTE = 8
 PIN_DISSOLVER_UP = 9
 PIN_DISSOLVER_DOWN = 10
-PIN_STEPPER_DIR = 14
-PIN_STEPPER_ENA = 15
+PIN_STEPPER_DIR = 0
+PIN_STEPPER_ENA = 1
 
 GPIO_STEPPER_PUL = ("/dev/gpiochip1", 1)
 
@@ -68,6 +69,7 @@ def init_hardware() -> Dict[str, Any]:
     """按 test.py 的风格初始化硬件对象。"""
 
     tca9555 = TCA9555(i2c_bus=TCA9555_BUS, addr=TCA9555_ADDR)
+    tca9555_ctrl = TCA9555(i2c_bus=TCA9555_BUS, addr=TCA9555_CTRL_ADDR)
     ads1115 = ADS1115(i2c_bus=ADS1115_BUS, addr=ADS1115_ADDR)
     ads1115.set_gain(ADS1115_REG_CONFIG_PGA_4_096V)
 
@@ -89,8 +91,8 @@ def init_hardware() -> Dict[str, Any]:
         consumer="recipe_stepper_pul",
         default_value=False,
     )
-    dir_pin = Tca9555Pin(tca9555, PIN_STEPPER_DIR, initial_value=False)
-    ena_pin = Tca9555Pin(tca9555, PIN_STEPPER_ENA, initial_value=True)
+    dir_pin = Tca9555Pin(tca9555_ctrl, PIN_STEPPER_DIR, initial_value=False)
+    ena_pin = Tca9555Pin(tca9555_ctrl, PIN_STEPPER_ENA, initial_value=True)
 
     stepper = Stepper(
         pul_pin=pul_pin,
@@ -139,6 +141,7 @@ def init_hardware() -> Dict[str, Any]:
 
     return {
         "tca9555": tca9555,
+        "tca9555_ctrl": tca9555_ctrl,
         "ads1115": ads1115,
         "valves": valves,
         "stepper": stepper,
@@ -185,6 +188,13 @@ def cleanup_hardware(hw: Dict[str, Any] | None) -> None:
     if tca9555 is not None:
         try:
             tca9555.close()
+        except Exception:
+            pass
+
+    tca9555_ctrl = hw.get("tca9555_ctrl")
+    if tca9555_ctrl is not None:
+        try:
+            tca9555_ctrl.close()
         except Exception:
             pass
 

@@ -65,7 +65,8 @@ class TcaConfig:
     """TCA9555 的 I2C 参数。"""
 
     bus: int = 1
-    addr: int = 0x20
+    valve_addr: int = 0x20
+    control_addr: int = 0x21
 
 
 @dataclass(frozen=True)
@@ -73,8 +74,8 @@ class PumpConfig:
     """步进泵相关的引脚和运行参数。"""
 
     pulse_pin: tuple[str, int] = ("/dev/gpiochip1", 1)
-    direction_pin: int = 14
-    enable_pin: int = 15
+    direction_pin: int = 0
+    enable_pin: int = 1
     steps_per_rev: int = 800
     rpm: int = 300
     aspirate_direction: str = "reverse"

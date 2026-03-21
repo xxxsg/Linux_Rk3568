@@ -41,6 +41,8 @@ from lib.stepper import Stepper
 TCA9555_BUS = 1
 # TCA9555 设备地址。
 TCA9555_ADDR = 0x20
+# 第二颗 TCA9555 设备地址（用于步进驱动控制）。
+TCA9555_CTRL_ADDR = 0x21
 # ADS1115 所在 I2C 总线编号。
 ADS1115_BUS = 1
 # ADS1115 设备地址。
@@ -70,10 +72,10 @@ PIN_CLEAN_WASTE = 8
 PIN_DISSOLVER_UP = 9
 # PIN_DISSOLVER_DOWN：消解器下游阀门。
 PIN_DISSOLVER_DOWN = 10
-# PIN_STEPPER_DIR：步进驱动方向控制引脚。
-PIN_STEPPER_DIR = 14
-# PIN_STEPPER_ENA：步进驱动使能控制引脚。
-PIN_STEPPER_ENA = 15
+# PIN_STEPPER_DIR：步进驱动方向控制引脚（0x21 pin0）。
+PIN_STEPPER_DIR = 0
+# PIN_STEPPER_ENA：步进驱动使能控制引脚（0x21 pin1）。
+PIN_STEPPER_ENA = 1
 
 # 步进驱动器的脉冲输出引脚，直接由 GPIO 输出。
 # 元组格式为 `(gpiochip 路径, line 编号)`。
@@ -143,6 +145,7 @@ def init_hardware() -> Dict[str, Any]:
 
     # 初始化 IO 扩展器，用于控制阀门和步进驱动的部分控制脚。
     tca9555 = TCA9555(i2c_bus=TCA9555_BUS, addr=TCA9555_ADDR)
+    tca9555_ctrl = TCA9555(i2c_bus=TCA9555_BUS, addr=TCA9555_CTRL_ADDR)
     # 初始化 ADS1115，用于读取模拟量。
     ads1115 = ADS1115(i2c_bus=ADS1115_BUS, addr=ADS1115_ADDR)
 
@@ -166,9 +169,9 @@ def init_hardware() -> Dict[str, Any]:
         default_value=False,
     )
     # dir_pin：控制步进驱动方向。
-    dir_pin = Tca9555Pin(tca9555, PIN_STEPPER_DIR, initial_value=False)
+    dir_pin = Tca9555Pin(tca9555_ctrl, PIN_STEPPER_DIR, initial_value=False)
     # ena_pin：控制步进驱动使能。
-    ena_pin = Tca9555Pin(tca9555, PIN_STEPPER_ENA, initial_value=True)
+    ena_pin = Tca9555Pin(tca9555_ctrl, PIN_STEPPER_ENA, initial_value=True)
 
     stepper = Stepper(
         # pul_pin：脉冲输出引脚。
@@ -235,6 +238,7 @@ def init_hardware() -> Dict[str, Any]:
 
     return {
         "tca9555": tca9555,
+        "tca9555_ctrl": tca9555_ctrl,
         "ads1115": ads1115,
         "valves": valve_pins,
         "stepper": stepper,
@@ -286,6 +290,13 @@ def cleanup_hardware(hw: Dict[str, Any]) -> None:
     if tca9555 is not None:
         try:
             tca9555.close()
+        except Exception:
+            pass
+
+    tca9555_ctrl = hw.get("tca9555_ctrl")
+    if tca9555_ctrl is not None:
+        try:
+            tca9555_ctrl.close()
         except Exception:
             pass
 
@@ -437,8 +448,10 @@ def test_flow(
     close_all_flow_valves(hw)
     time.sleep(0.5)
 
-    input(f"步骤2: 吸液 {aspirate_to_meter_s:.1f}s，液体进入计量端游，按回车继续...")
+    input(f"步骤2: 打开标1阀门并吸液 {aspirate_to_meter_s:.1f}s，液体进入计量端游，按回车继续...")
+    valves["std_1"].write(True)
     pump.aspirate_time(aspirate_to_meter_s)
+    valves["std_1"].write(False)
     time.sleep(0.5)
 
     input("步骤3: 打开消解器相关阀门（3个），按回车继续...")
