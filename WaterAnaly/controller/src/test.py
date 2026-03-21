@@ -347,6 +347,32 @@ def test_max31865(hw: Dict[str, Any]) -> None:
     print(f"温度: {temperature:.2f} C")
 
 
+def test_softspi(hw: Dict[str, Any]) -> None:
+    """直接测试 SoftSPI 与 MAX31865 的底层寄存器读写。"""
+
+    spi = hw["spi"]
+    max31865 = hw["max31865"]
+
+    print("=== SoftSPI 原始通信测试 ===")
+    print(f"MISO 空闲电平: {int(spi.miso.read())}")
+
+    config_reg = max31865.read_register(0x00)
+    fault_reg = max31865.read_register(0x07)
+    rtd_regs = max31865.read_registers(0x01, 2)
+
+    print(f"CONFIG(0x00): 0x{config_reg:02X}")
+    print(f"FAULT(0x07): 0x{fault_reg:02X}")
+    print(f"RTD(0x01,0x02): {[f'0x{value:02X}' for value in rtd_regs]}")
+
+    # 手动做一次原始 SPI 事务，便于确认 CS/SCLK/MOSI/MISO 时序是否正常。
+    spi.cs_low()
+    try:
+        raw_response = spi.transfer([0x00, 0x00, 0x00, 0x00])
+    finally:
+        spi.cs_high()
+    print(f"原始事务 [0x00, 0x00, 0x00, 0x00] -> {raw_response}")
+
+
 def test_tca9555_pins(hw: Dict[str, Any]) -> None:
     """逐个手动测试阀门输出引脚。
 
@@ -513,6 +539,7 @@ def run_test_by_name(hw: Dict[str, Any], test_name: str) -> None:
         test_name: 测试名称。
             支持：
             - `ads`
+            - `spi`
             - `max`
             - `valves`
             - `pump`
@@ -521,6 +548,8 @@ def run_test_by_name(hw: Dict[str, Any], test_name: str) -> None:
 
     if test_name == "ads":
         test_ads1115(hw)
+    elif test_name == "spi":
+        test_softspi(hw)
     elif test_name in {"max", "max31865"}:
         test_max31865(hw)
     elif test_name == "valves":
@@ -544,7 +573,7 @@ def test() -> None:
         print("硬件测试环境已初始化")
         while True:
             print("")
-            print("可选测试项: ads / max / valves / pump / flow / all / quit")
+            print("可选测试项: ads / spi / max / valves / pump / flow / all / quit")
             choice = input("请输入要执行的测试项: ").strip().lower()
 
             if not choice:
@@ -556,11 +585,11 @@ def test() -> None:
                 break
 
             if choice == "all":
-                for test_name in ("ads", "max", "valves", "pump", "flow"):
+                for test_name in ("ads", "spi", "max", "valves", "pump", "flow"):
                     run_test_by_name(hw, test_name)
                 continue
 
-            if choice not in {"ads", "max", "max31865", "valves", "pump", "flow"}:
+            if choice not in {"ads", "spi", "max", "max31865", "valves", "pump", "flow"}:
                 print(f"不支持的测试项: {choice}")
                 continue
 
