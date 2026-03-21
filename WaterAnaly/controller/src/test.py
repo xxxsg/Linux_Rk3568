@@ -82,13 +82,13 @@ PIN_STEPPER_ENA = 1
 GPIO_STEPPER_PUL = ("/dev/gpiochip1", 1)
 
 # MAX31865 软 SPI 的各个引脚定义。
-# GPIO_MAX31865_SCLK：SPI 时钟线。
+# GPIO_MAX31865_SCLK：SPI 时钟线。 pin2
 GPIO_MAX31865_SCLK = ("/dev/gpiochip3", 5)
-# GPIO_MAX31865_MOSI：SPI 主发从收数据线。
+# GPIO_MAX31865_MOSI：SPI 主发从收数据线。 pin3
 GPIO_MAX31865_MOSI = ("/dev/gpiochip1", 0)
-# GPIO_MAX31865_MISO：SPI 主收从发数据线。
+# GPIO_MAX31865_MISO：SPI 主收从发数据线。pin4
 GPIO_MAX31865_MISO = ("/dev/gpiochip3", 4)
-# GPIO_MAX31865_CS：MAX31865 片选信号线。
+# GPIO_MAX31865_CS：MAX31865 片选信号线。 pin5
 GPIO_MAX31865_CS = ("/dev/gpiochip3", 3)
 
 # 阀门遍历顺序，供交互式测试逐个开关。
@@ -329,12 +329,22 @@ def test_max31865(hw: Dict[str, Any]) -> None:
     max31865 = hw["max31865"]
 
     print("=== MAX31865 温度读取测试 ===")
-    temperature = max31865.read_temperature()
+    raw_rtd = max31865.read_raw_rtd()
     resistance = max31865.read_resistance()
     fault = max31865.read_fault()
-    print(f"温度: {temperature:.2f} C")
+
+    print(f"原始RTD: {raw_rtd}")
     print(f"阻值: {resistance:.4f} ohm")
     print(f"故障寄存器: 0x{fault:02X}")
+
+    try:
+        temperature = max31865.read_temperature()
+    except ValueError as exc:
+        print(f"温度换算失败: {exc}")
+        print("这通常表示PT100/PT1000未接好、线制配置不匹配，或SPI读取异常。")
+        return
+
+    print(f"温度: {temperature:.2f} C")
 
 
 def test_tca9555_pins(hw: Dict[str, Any]) -> None:
@@ -503,7 +513,7 @@ def run_test_by_name(hw: Dict[str, Any], test_name: str) -> None:
         test_name: 测试名称。
             支持：
             - `ads`
-            - `max31865`
+            - `max`
             - `valves`
             - `pump`
             - `flow`
@@ -511,7 +521,7 @@ def run_test_by_name(hw: Dict[str, Any], test_name: str) -> None:
 
     if test_name == "ads":
         test_ads1115(hw)
-    elif test_name == "max31865":
+    elif test_name in {"max", "max31865"}:
         test_max31865(hw)
     elif test_name == "valves":
         test_tca9555_pins(hw)
@@ -534,7 +544,7 @@ def test() -> None:
         print("硬件测试环境已初始化")
         while True:
             print("")
-            print("可选测试项: ads / max31865 / valves / pump / flow / all / quit")
+            print("可选测试项: ads / max / valves / pump / flow / all / quit")
             choice = input("请输入要执行的测试项: ").strip().lower()
 
             if not choice:
@@ -546,11 +556,11 @@ def test() -> None:
                 break
 
             if choice == "all":
-                for test_name in ("ads", "max31865", "valves", "pump", "flow"):
+                for test_name in ("ads", "max", "valves", "pump", "flow"):
                     run_test_by_name(hw, test_name)
                 continue
 
-            if choice not in {"ads", "max31865", "valves", "pump", "flow"}:
+            if choice not in {"ads", "max", "max31865", "valves", "pump", "flow"}:
                 print(f"不支持的测试项: {choice}")
                 continue
 
