@@ -30,7 +30,6 @@ if PROJECT_ROOT not in sys.path:
 
 from lib.ADS1115 import ADS1115, ADS1115_REG_CONFIG_PGA_4_096V
 from lib.MAX31865 import MAX31865
-from lib.MAX31865 import MAX31865_CONFIG_1SHOT, MAX31865_CONFIG_BIAS, MAX31865_CONFIG_FILTER_50HZ
 from lib.SoftSPI import SoftSPI
 from lib.TCA9555 import TCA9555
 from lib.pins import GpiodPin, Tca9555Pin
@@ -330,11 +329,6 @@ def test_max31865(hw: Dict[str, Any]) -> None:
     max31865 = hw["max31865"]
 
     print("=== MAX31865 温度读取测试 ===")
-    # 仅在测试脚本中显式触发一次转换，帮助排查“寄存器能读但RTD始终为0”的情况。
-    oneshot_config = MAX31865_CONFIG_BIAS | MAX31865_CONFIG_FILTER_50HZ | MAX31865_CONFIG_1SHOT
-    max31865.write_register(0x00, oneshot_config)
-    time.sleep(0.1)
-
     raw_rtd = max31865.read_raw_rtd()
     resistance = max31865.read_resistance()
     fault = max31865.read_fault()

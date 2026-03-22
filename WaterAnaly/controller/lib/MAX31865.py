@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import time
 from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:
@@ -185,12 +186,19 @@ class MAX31865:
         self.write_register(MAX31865_CONFIG_REG, self._build_config_value())
         self.clear_faults()
 
+    def _start_one_shot_conversion(self) -> None:
+        """触发一次 RTD 单次转换。"""
+        config = self._build_config_value() | MAX31865_CONFIG_1SHOT
+        self.write_register(MAX31865_CONFIG_REG, config)
+        time.sleep(0.1)
+
     def read_fault(self) -> int:
         """读取故障状态寄存器。"""
         return self.read_register(MAX31865_FAULT_STATUS_REG)
 
     def read_raw_rtd(self) -> int:
         """读取 RTD 原始 15 位 ADC 结果。"""
+        self._start_one_shot_conversion()
         data = self.read_registers(MAX31865_RTD_MSB_REG, 2)
         return ((data[0] << 8) | data[1]) >> 1
 
