@@ -5,7 +5,6 @@ import sys
 from dataclasses import dataclass, field
 
 
-# 允许直接从 `src` 目录运行脚本时导入上一级 `lib`。
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
 if PROJECT_ROOT not in sys.path:
@@ -14,7 +13,6 @@ if PROJECT_ROOT not in sys.path:
 from lib.ADS1115 import ADS1115_REG_CONFIG_PGA_4_096V
 
 
-# 与底层 Stepper / Pump 约定保持一致的方向常量。
 DIR_FORWARD = "FORWARD"
 DIR_REVERSE = "REVERSE"
 
@@ -41,7 +39,7 @@ class TimingConfig:
 
 @dataclass(frozen=True)
 class ThresholdConfig:
-    """计量单元满位 / 空位判定阈值。"""
+    """计量单元液位判断阈值，单位 mV。"""
 
     upper_full_mv: float = 1200.0
     lower_full_mv: float = 1200.0
@@ -50,7 +48,7 @@ class ThresholdConfig:
 
 @dataclass(frozen=True)
 class AdsConfig:
-    """ADS1115 及各通道功能分配。"""
+    """ADS1115 采集配置。"""
 
     bus: int = 1
     addr: int = 0x48
@@ -62,20 +60,50 @@ class AdsConfig:
 
 @dataclass(frozen=True)
 class TcaConfig:
-    """TCA9555 的 I2C 参数。"""
+    """TCA9555 配置。
+
+    - `valve_pins` 是液路阀所在的扩展 IO 编号
+    - `control_pins` 是控制类输出所在的扩展 IO 编号
+
+    这里统一使用八进制表示 TCA9555 的 pin，方便和硬件丝印/历史文档保持一致。
+    """
 
     bus: int = 1
     valve_addr: int = 0x20
     control_addr: int = 0x21
+    valve_pins: dict[str, int] = field(
+        default_factory=lambda: {
+            "dissolver": 0o0,  # 消解器主阀
+            "std_1": 0o1,  # 标一/清洗液阀
+            "std_2": 0o2,  # 标二阀
+            "sample": 0o3,  # 水样阀
+            "analysis_waste": 0o4,  # 分析废液阀
+            "reagent_a": 0o5,  # 试剂 A 阀
+            "reagent_b": 0o6,  # 试剂 B 阀
+            "reagent_c": 0o7,  # 试剂 C 阀
+            "clean_waste": 0o10,  # 清洗废液阀
+            "dissolver_up": 0o11,  # 消解器上通路阀
+            "dissolver_down": 0o12,  # 消解器下通路阀
+        }
+    )
+    control_pins: dict[str, int] = field(
+        default_factory=lambda: {
+            "stepper_dir": 0o0,  # 泵电机方向控制
+            "stepper_ena": 0o1,  # 泵电机使能控制
+            "meter_up": 0o2,  # 计量单元上液位光路控制
+            "meter_down": 0o3,  # 计量单元下液位光路控制
+            "digest_light": 0o4,  # 消解器读数光源控制
+            "digest_ref_amp": 0o5,  # 消解器参考通道控制
+            "digest_main_amp": 0o6,  # 消解器测量通道控制
+        }
+    )
 
 
 @dataclass(frozen=True)
 class PumpConfig:
-    """步进泵相关的引脚和运行参数。"""
+    """泵和步进电机相关配置。"""
 
     pulse_pin: tuple[str, int] = ("/dev/gpiochip1", 1)
-    direction_pin: int = 0
-    enable_pin: int = 1
     steps_per_rev: int = 800
     rpm: int = 300
     aspirate_direction: str = "reverse"
@@ -83,7 +111,7 @@ class PumpConfig:
 
 @dataclass(frozen=True)
 class TemperatureConfig:
-    """MAX31865 软 SPI 接线及传感器参数。"""
+    """MAX31865 与温度探头配置。"""
 
     sclk_pin: tuple[str, int] = ("/dev/gpiochip3", 5)
     mosi_pin: tuple[str, int] = ("/dev/gpiochip1", 0)
@@ -97,11 +125,10 @@ class TemperatureConfig:
 
 @dataclass(frozen=True)
 class RecipeConfig:
-    """工艺流程中用到的液路命名和默认参数。"""
+    """主流程使用的液路命名和默认工艺参数。"""
 
     standard_concentration: float = 1.0
     digest_target_temp_c: float = 50.0
-    # 计量单元为常开，不单独配置入口阀。
     digestor_valves: tuple[str, str, str] = ("dissolver", "dissolver_up", "dissolver_down")
     sample_source: str = "sample"
     standard_source: str = "std_2"
@@ -115,31 +142,20 @@ class RecipeConfig:
 
 @dataclass(frozen=True)
 class AppConfig:
-    """统一配置入口，供硬件装配和流程调用。"""
+    """统一配置入口。
 
-    timing: TimingConfig = field(default_factory=TimingConfig)
-    thresholds: ThresholdConfig = field(default_factory=ThresholdConfig)
-    ads: AdsConfig = field(default_factory=AdsConfig)
-    tca: TcaConfig = field(default_factory=TcaConfig)
-    pump: PumpConfig = field(default_factory=PumpConfig)
-    temperature: TemperatureConfig = field(default_factory=TemperatureConfig)
-    recipe: RecipeConfig = field(default_factory=RecipeConfig)
-    valve_pin_map: dict[str, int] = field(
-        default_factory=lambda: {
-            "dissolver": 0,
-            "std_1": 1,
-            "std_2": 2,
-            "sample": 3,
-            "analysis_waste": 4,
-            "reagent_a": 5,
-            "reagent_b": 6,
-            "reagent_c": 7,
-            "clean_waste": 8,
-            "dissolver_up": 9,
-            "dissolver_down": 10,
-        }
-    )
+    原则上：
+    - 会调的东西放这里
+    - `hardware.py` 只按这里的配置完成装配
+    """
+
+    timing: TimingConfig = field(default_factory=TimingConfig)  # 流程时序参数
+    thresholds: ThresholdConfig = field(default_factory=ThresholdConfig)  # 液位判断阈值
+    ads: AdsConfig = field(default_factory=AdsConfig)  # ADS1115 采集配置
+    tca: TcaConfig = field(default_factory=TcaConfig)  # TCA9555 地址和 pin 映射
+    pump: PumpConfig = field(default_factory=PumpConfig)  # 泵和步进电机参数
+    temperature: TemperatureConfig = field(default_factory=TemperatureConfig)  # 温度采集配置
+    recipe: RecipeConfig = field(default_factory=RecipeConfig)  # 主流程工艺参数
 
 
-# 默认配置用于 main 直接运行，也方便测试时按需覆盖。
 DEFAULT_CONFIG = AppConfig()

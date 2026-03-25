@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Any, Dict
+from dataclasses import dataclass
 
 
-# 允许直接从 `src` 目录运行脚本时导入上一级 `lib`。
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
-from lib.ADS1115 import ADS1115, ADS1115_REG_CONFIG_PGA_4_096V
+from config import AppConfig, DEFAULT_CONFIG
+from lib.ADS1115 import ADS1115
 from lib.MAX31865 import MAX31865
 from lib.SoftSPI import SoftSPI
 from lib.TCA9555 import TCA9555
@@ -20,189 +20,267 @@ from lib.pump import Pump
 from lib.stepper import Stepper
 
 
-# 这里直接沿用 test.py 中已经验证过的硬件定义，便于保持一致。
-TCA9555_BUS = 1
-TCA9555_ADDR = 0x20
-TCA9555_CTRL_ADDR = 0x21
-ADS1115_BUS = 1
-ADS1115_ADDR = 0x48
+VALVE_PIN_ORDER = list(DEFAULT_CONFIG.tca.valve_pins.items())
 
-# TCA9555 输出引脚定义。
-PIN_DISSOLVER = 0
-PIN_STD_1 = 1
-PIN_STD_2 = 2
-PIN_SAMPLE = 3
-PIN_ANALYSIS_WASTE = 4
-PIN_REAGENT_A = 5
-PIN_REAGENT_B = 6
-PIN_REAGENT_C = 7
-PIN_CLEAN_WASTE = 8
-PIN_DISSOLVER_UP = 9
-PIN_DISSOLVER_DOWN = 10
-PIN_STEPPER_DIR = 0
-PIN_STEPPER_ENA = 1
-
-GPIO_STEPPER_PUL = ("/dev/gpiochip1", 1)
-
-GPIO_MAX31865_SCLK = ("/dev/gpiochip3", 5)
-GPIO_MAX31865_MOSI = ("/dev/gpiochip1", 0)
-GPIO_MAX31865_MISO = ("/dev/gpiochip3", 4)
-GPIO_MAX31865_CS = ("/dev/gpiochip3", 3)
-
-# 统一保留阀门命名，供流程层直接引用。
-VALVE_PIN_ORDER = [
-    ("dissolver", PIN_DISSOLVER),
-    ("std_1", PIN_STD_1),
-    ("std_2", PIN_STD_2),
-    ("sample", PIN_SAMPLE),
-    ("analysis_waste", PIN_ANALYSIS_WASTE),
-    ("reagent_a", PIN_REAGENT_A),
-    ("reagent_b", PIN_REAGENT_B),
-    ("reagent_c", PIN_REAGENT_C),
-    ("clean_waste", PIN_CLEAN_WASTE),
-    ("dissolver_up", PIN_DISSOLVER_UP),
-    ("dissolver_down", PIN_DISSOLVER_DOWN),
+OPTICS_CTRL_PIN_ORDER = [
+    ("meter_up", DEFAULT_CONFIG.tca.control_pins["meter_up"]),
+    ("meter_down", DEFAULT_CONFIG.tca.control_pins["meter_down"]),
+    ("digest_light", DEFAULT_CONFIG.tca.control_pins["digest_light"]),
+    ("digest_ref_amp", DEFAULT_CONFIG.tca.control_pins["digest_ref_amp"]),
+    ("digest_main_amp", DEFAULT_CONFIG.tca.control_pins["digest_main_amp"]),
 ]
 
 
-def init_hardware() -> Dict[str, Any]:
-    """按 test.py 的风格初始化硬件对象。"""
+class ValveBank:
+    """液路阀组的轻量封装。
 
-    tca9555 = TCA9555(i2c_bus=TCA9555_BUS, addr=TCA9555_ADDR)
-    tca9555_ctrl = TCA9555(i2c_bus=TCA9555_BUS, addr=TCA9555_CTRL_ADDR)
-    ads1115 = ADS1115(i2c_bus=ADS1115_BUS, addr=ADS1115_ADDR)
-    ads1115.set_gain(ADS1115_REG_CONFIG_PGA_4_096V)
+    流程层只需要表达“打开哪些阀”和“关闭所有阀”，
+    不需要知道底层阀门是通过哪种 IO 设备驱动的。
+    """
 
-    valves: Dict[str, Tca9555Pin] = {}
-    valves["dissolver"] = Tca9555Pin(tca9555, PIN_DISSOLVER, initial_value=False)
-    valves["std_1"] = Tca9555Pin(tca9555, PIN_STD_1, initial_value=False)
-    valves["std_2"] = Tca9555Pin(tca9555, PIN_STD_2, initial_value=False)
-    valves["sample"] = Tca9555Pin(tca9555, PIN_SAMPLE, initial_value=False)
-    valves["analysis_waste"] = Tca9555Pin(tca9555, PIN_ANALYSIS_WASTE, initial_value=False)
-    valves["reagent_a"] = Tca9555Pin(tca9555, PIN_REAGENT_A, initial_value=False)
-    valves["reagent_b"] = Tca9555Pin(tca9555, PIN_REAGENT_B, initial_value=False)
-    valves["reagent_c"] = Tca9555Pin(tca9555, PIN_REAGENT_C, initial_value=False)
-    valves["clean_waste"] = Tca9555Pin(tca9555, PIN_CLEAN_WASTE, initial_value=False)
-    valves["dissolver_up"] = Tca9555Pin(tca9555, PIN_DISSOLVER_UP, initial_value=False)
-    valves["dissolver_down"] = Tca9555Pin(tca9555, PIN_DISSOLVER_DOWN, initial_value=False)
+    def __init__(self, pins: dict[str, Tca9555Pin]) -> None:
+        self._pins = pins
+
+    @property
+    def pins(self) -> dict[str, Tca9555Pin]:
+        return self._pins
+
+    def close_all(self) -> None:
+        for pin in self._pins.values():
+            pin.write(False)
+
+    def open(self, names: list[str] | tuple[str, ...]) -> None:
+        for name in names:
+            self._pins[name].write(True)
+
+
+class MeterOptics:
+    """计量单元液位检测封装。"""
+
+    def __init__(self, ads: ADS1115, upper_channel: int, lower_channel: int) -> None:
+        self._ads = ads
+        self._upper_channel = upper_channel
+        self._lower_channel = lower_channel
+
+    def read_upper_mv(self) -> float:
+        return float(self._ads.read_voltage(self._upper_channel))
+
+    def read_lower_mv(self) -> float:
+        return float(self._ads.read_voltage(self._lower_channel))
+
+
+class DigestOptics:
+    """消解器读数通道封装。"""
+
+    def __init__(self, ads: ADS1115, channel: int) -> None:
+        self._ads = ads
+        self._channel = channel
+
+    def read_absorbance_mv(self) -> float:
+        return float(self._ads.read_voltage(self._channel))
+
+
+class TemperatureSensor:
+    """温度读取封装。"""
+
+    def __init__(self, probe: MAX31865) -> None:
+        self._probe = probe
+
+    def read_temperature_c(self) -> float:
+        return float(self._probe.read_temperature())
+
+
+@dataclass(frozen=True)
+class HardwareContext:
+    """流程运行时使用的硬件上下文。"""
+
+    valve_io: TCA9555
+    control_io: TCA9555
+    ads1115: ADS1115
+    valves: dict[str, Tca9555Pin]
+    optics_controls: dict[str, Tca9555Pin]
+    stepper: Stepper
+    pump: Pump
+    spi: SoftSPI
+    max31865: MAX31865
+    valve: ValveBank
+    meter_optics: MeterOptics
+    digest_optics: DigestOptics
+    temp_sensor: TemperatureSensor
+
+
+def _build_tca_pins(io: TCA9555, pin_map: dict[str, int]) -> dict[str, Tca9555Pin]:
+    """按配置批量构建 TCA9555 输出 pin。"""
+
+    pins: dict[str, Tca9555Pin] = {}
+    for name, pin_no in pin_map.items():
+        pins[name] = Tca9555Pin(io, pin_no, initial_value=False)
+    return pins
+
+
+def init_hardware(config: AppConfig = DEFAULT_CONFIG) -> HardwareContext:
+    """按配置组装一份可直接供流程层使用的硬件上下文。"""
+
+    valve_io = TCA9555(i2c_bus=config.tca.bus, addr=config.tca.valve_addr)
+    control_io = TCA9555(i2c_bus=config.tca.bus, addr=config.tca.control_addr)
+    ads1115 = ADS1115(i2c_bus=config.ads.bus, addr=config.ads.addr)
+    ads1115.set_gain(config.ads.gain)
+
+    valves = _build_tca_pins(valve_io, config.tca.valve_pins)
+    optics_controls = _build_tca_pins(
+        control_io,
+        {
+            "meter_up": config.tca.control_pins["meter_up"],
+            "meter_down": config.tca.control_pins["meter_down"],
+            "digest_light": config.tca.control_pins["digest_light"],
+            "digest_ref_amp": config.tca.control_pins["digest_ref_amp"],
+            "digest_main_amp": config.tca.control_pins["digest_main_amp"],
+        },
+    )
 
     pul_pin = GpiodPin(
-        GPIO_STEPPER_PUL,
+        config.pump.pulse_pin,
         consumer="recipe_stepper_pul",
         default_value=False,
     )
-    dir_pin = Tca9555Pin(tca9555_ctrl, PIN_STEPPER_DIR, initial_value=False)
-    ena_pin = Tca9555Pin(tca9555_ctrl, PIN_STEPPER_ENA, initial_value=True)
+    dir_pin = Tca9555Pin(
+        control_io,
+        config.tca.control_pins["stepper_dir"],
+        initial_value=False,
+    )
+    ena_pin = Tca9555Pin(
+        control_io,
+        config.tca.control_pins["stepper_ena"],
+        initial_value=True,
+    )
 
     stepper = Stepper(
         pul_pin=pul_pin,
         dir_pin=dir_pin,
         ena_pin=ena_pin,
-        steps_per_rev=800,
+        steps_per_rev=config.pump.steps_per_rev,
     )
     stepper.configure_driver(
         dir_high_forward=True,
         ena_low_enable=True,
         auto_enable=True,
     )
-    stepper.set_rpm(300)
+    stepper.set_rpm(config.pump.rpm)
 
-    pump = Pump(driver=stepper, aspirate_direction="reverse")
+    pump = Pump(driver=stepper, aspirate_direction=config.pump.aspirate_direction)
 
     spi = SoftSPI(
         sclk=GpiodPin(
-            GPIO_MAX31865_SCLK,
+            config.temperature.sclk_pin,
             consumer="recipe_max31865_sclk",
             default_value=False,
         ),
         mosi=GpiodPin(
-            GPIO_MAX31865_MOSI,
+            config.temperature.mosi_pin,
             consumer="recipe_max31865_mosi",
             default_value=False,
         ),
         miso=GpiodPin(
-            GPIO_MAX31865_MISO,
+            config.temperature.miso_pin,
             consumer="recipe_max31865_miso",
             mode="input",
         ),
         cs=GpiodPin(
-            GPIO_MAX31865_CS,
+            config.temperature.cs_pin,
             consumer="recipe_max31865_cs",
             default_value=True,
         ),
     )
     max31865 = MAX31865(
         spi=spi,
-        rref=430.0,
-        r0=100.0,
-        wires=2,
-        filter_frequency=50,
+        rref=config.temperature.rref,
+        r0=config.temperature.r0,
+        wires=config.temperature.wires,
+        filter_frequency=config.temperature.filter_frequency,
     )
 
-    return {
-        "tca9555": tca9555,
-        "tca9555_ctrl": tca9555_ctrl,
-        "ads1115": ads1115,
-        "valves": valves,
-        "stepper": stepper,
-        "pump": pump,
-        "spi": spi,
-        "max31865": max31865,
-    }
+    valve = ValveBank(valves)
+    meter_optics = MeterOptics(
+        ads1115,
+        upper_channel=config.ads.meter_upper_channel,
+        lower_channel=config.ads.meter_lower_channel,
+    )
+    digest_optics = DigestOptics(ads1115, channel=config.ads.digest_channel)
+    temp_sensor = TemperatureSensor(max31865)
+
+    return HardwareContext(
+        valve_io=valve_io,
+        control_io=control_io,
+        ads1115=ads1115,
+        valves=valves,
+        optics_controls=optics_controls,
+        stepper=stepper,
+        pump=pump,
+        spi=spi,
+        max31865=max31865,
+        valve=valve,
+        meter_optics=meter_optics,
+        digest_optics=digest_optics,
+        temp_sensor=temp_sensor,
+    )
 
 
-def cleanup_hardware(hw: Dict[str, Any] | None) -> None:
-    """按 test.py 的清理顺序释放资源。"""
+def cleanup_hardware(ctx: HardwareContext | None) -> None:
+    """统一关闭和清理硬件资源。"""
 
-    if not hw:
+    if not ctx:
         return
 
-    ads1115 = hw.get("ads1115")
-    if ads1115 is not None:
-        try:
-            ads1115.close()
-        except Exception:
-            pass
+    try:
+        ctx.valve.close_all()
+    except Exception:
+        pass
 
-    max31865 = hw.get("max31865")
-    if max31865 is not None:
-        try:
-            max31865.close()
-        except Exception:
-            pass
-
-    pump = hw.get("pump")
-    if pump is not None:
-        try:
-            pump.cleanup()
-        except Exception:
-            pass
-
-    for pin in hw.get("valves", {}).values():
+    for pin in ctx.optics_controls.values():
         try:
             pin.close()
         except Exception:
             pass
 
-    tca9555 = hw.get("tca9555")
-    if tca9555 is not None:
+    for pin in ctx.valves.values():
         try:
-            tca9555.close()
+            pin.close()
         except Exception:
             pass
 
-    tca9555_ctrl = hw.get("tca9555_ctrl")
-    if tca9555_ctrl is not None:
-        try:
-            tca9555_ctrl.close()
-        except Exception:
-            pass
+    try:
+        ctx.ads1115.close()
+    except Exception:
+        pass
+
+    try:
+        ctx.max31865.close()
+    except Exception:
+        pass
+
+    try:
+        ctx.pump.cleanup()
+    except Exception:
+        pass
+
+    try:
+        ctx.valve_io.close()
+    except Exception:
+        pass
+
+    try:
+        ctx.control_io.close()
+    except Exception:
+        pass
 
 
-# 为现有流程文件保留兼容入口，内部直接复用 test 风格实现。
-def build_hardware(_config=None) -> Dict[str, Any]:
-    return init_hardware()
+def build_hardware(config: AppConfig | None = None) -> HardwareContext:
+    """对外提供统一的硬件构建入口。"""
+
+    return init_hardware(DEFAULT_CONFIG if config is None else config)
 
 
-def safe_shutdown(hw: Dict[str, Any] | None) -> None:
-    cleanup_hardware(hw)
+def safe_shutdown(ctx: HardwareContext | None) -> None:
+    """对外提供统一的安全关闭入口。"""
+
+    cleanup_hardware(ctx)
