@@ -43,6 +43,26 @@
 
 后续提供；
 
+浓度算法：
+Am = -log10((Vbias_m - Vm_0) / (Vbias_m - Vm_s))
+Ar = -log10((Vbias_r - Vr_0) / (Vbias_r - Vr_s))
+
+A = -log10(
+    ((Vbias_m - Vm_0) / (Vbias_m - Vm_s)) /
+    ((Vbias_r - Vr_0) / (Vbias_r - Vr_s))
+)
+
+C = (A - a) / b
+
+Vm_s    # 测量通道（样品）电压
+Vm_0    # 测量通道（空白）电压
+
+Vr_s    # 参比通道（样品）电压
+Vr_0    # 参比通道（空白）电压
+
+Vbias_m # 测量通道偏置电压（输入端断开时测得的TIA本底）
+Vbias_r # 参比通道偏置电压（输入端断开时测得的TIA本底）
+
 ## 关键文件分工
 
 - `src/main.py`
