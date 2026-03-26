@@ -14,6 +14,12 @@
 
 ## 最近更新
 
+### 2026-03-26
+- 任务目标: 补回并增强 `src/config.py`、`src/hardware.py`、`src/primitives.py` 的中文注释，同时清理日志配置中的冗余 `log_level`
+- 当前进展: 已完成三个文件的中文注释补充；`primitives.py` 已按元语层分类补充职责说明和函数清单；`config.py` 已删除 `log_level`，日志只由 `DEBUG` 控制
+- 决策及原因: 保留并增强中文注释作为项目硬约束；`primitives.py` 用分层注释提升可读性；日志配置收敛为 `DEBUG=True/False`，避免双配置项造成理解混淆
+- 待解决问题: 暂无；已知但暂未处理的问题仍是阀门打开逻辑后续可考虑收敛为 `tca9555.write_word`
+
 ### 2026-03-24
 - 任务目标: 整理 AI 首读文档，明确分工协作
 - 当前进展: 已重写 README，并完成 Agent 和 Memory 的精简与职责划分

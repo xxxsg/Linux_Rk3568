@@ -22,21 +22,19 @@ from lib.stepper import Stepper
 
 VALVE_PIN_ORDER = list(DEFAULT_CONFIG.tca.valve_pins.items())
 
+# 光学与加热相关控制脚，保留固定顺序便于统一初始化和排查。
 OPTICS_CTRL_PIN_ORDER = [
     ("meter_up", DEFAULT_CONFIG.tca.control_pins["meter_up"]),
     ("meter_down", DEFAULT_CONFIG.tca.control_pins["meter_down"]),
     ("digest_light", DEFAULT_CONFIG.tca.control_pins["digest_light"]),
     ("digest_ref_amp", DEFAULT_CONFIG.tca.control_pins["digest_ref_amp"]),
     ("digest_main_amp", DEFAULT_CONFIG.tca.control_pins["digest_main_amp"]),
+    ("digest_heat", DEFAULT_CONFIG.tca.control_pins["digest_heat"]),
 ]
 
 
 class ValveBank:
-    """液路阀组的轻量封装。
-
-    流程层只需要表达“打开哪些阀”和“关闭所有阀”，
-    不需要知道底层阀门是通过哪种 IO 设备驱动的。
-    """
+    """液路阀门集合封装，负责统一开关阀动作。"""
 
     def __init__(self, pins: dict[str, Tca9555Pin]) -> None:
         self._pins = pins
@@ -46,16 +44,18 @@ class ValveBank:
         return self._pins
 
     def close_all(self) -> None:
+        # 安全默认态：所有液路阀门关闭。
         for pin in self._pins.values():
             pin.write(False)
 
     def open(self, names: list[str] | tuple[str, ...]) -> None:
+        # 仅打开调用方明确指定的通路。
         for name in names:
             self._pins[name].write(True)
 
 
 class MeterOptics:
-    """计量单元液位检测封装。"""
+    """计量单元液位光电读取封装。"""
 
     def __init__(self, ads: ADS1115, upper_channel: int, lower_channel: int) -> None:
         self._ads = ads
@@ -70,18 +70,62 @@ class MeterOptics:
 
 
 class DigestOptics:
-    """消解器读数通道封装。"""
+    """消解器读数光路封装，统一管理光源和两路放大通道。"""
 
-    def __init__(self, ads: ADS1115, channel: int) -> None:
+    def __init__(
+        self,
+        ads: ADS1115,
+        measure_channel: int,
+        reference_channel: int,
+        light_pin: Tca9555Pin,
+        ref_amp_pin: Tca9555Pin,
+        main_amp_pin: Tca9555Pin,
+    ) -> None:
         self._ads = ads
-        self._channel = channel
+        self._measure_channel = measure_channel
+        self._reference_channel = reference_channel
+        self._light_pin = light_pin
+        self._ref_amp_pin = ref_amp_pin
+        self._main_amp_pin = main_amp_pin
 
-    def read_absorbance_mv(self) -> float:
-        return float(self._ads.read_voltage(self._channel))
+    def read_measure_mv(self) -> float:
+        return float(self._ads.read_voltage(self._measure_channel))
+
+    def read_reference_mv(self) -> float:
+        return float(self._ads.read_voltage(self._reference_channel))
+
+    def light_on(self) -> None:
+        self._light_pin.write(True)
+
+    def light_off(self) -> None:
+        self._light_pin.write(False)
+
+    def connect_paths(self) -> None:
+        # 低电平闭合模拟通道，接入测量链路。
+        self._ref_amp_pin.write(False)
+        self._main_amp_pin.write(False)
+
+    def disconnect_paths(self) -> None:
+        # 高电平断开模拟通道，读取偏置本底。
+        self._ref_amp_pin.write(True)
+        self._main_amp_pin.write(True)
+
+
+class HeaterControl:
+    """消解器加热开关封装。"""
+
+    def __init__(self, pin: Tca9555Pin) -> None:
+        self._pin = pin
+
+    def on(self) -> None:
+        self._pin.write(True)
+
+    def off(self) -> None:
+        self._pin.write(False)
 
 
 class TemperatureSensor:
-    """温度读取封装。"""
+    """温度传感器读取封装。"""
 
     def __init__(self, probe: MAX31865) -> None:
         self._probe = probe
@@ -92,7 +136,7 @@ class TemperatureSensor:
 
 @dataclass(frozen=True)
 class HardwareContext:
-    """流程运行时使用的硬件上下文。"""
+    """集中持有整套硬件对象，供流程层与元语层复用。"""
 
     valve_io: TCA9555
     control_io: TCA9555
@@ -106,11 +150,12 @@ class HardwareContext:
     valve: ValveBank
     meter_optics: MeterOptics
     digest_optics: DigestOptics
+    heater: HeaterControl
     temp_sensor: TemperatureSensor
 
 
 def _build_tca_pins(io: TCA9555, pin_map: dict[str, int]) -> dict[str, Tca9555Pin]:
-    """按配置批量构建 TCA9555 输出 pin。"""
+    """按名称批量创建 TCA9555 引脚对象。"""
 
     pins: dict[str, Tca9555Pin] = {}
     for name, pin_no in pin_map.items():
@@ -119,13 +164,15 @@ def _build_tca_pins(io: TCA9555, pin_map: dict[str, int]) -> dict[str, Tca9555Pi
 
 
 def init_hardware(config: AppConfig = DEFAULT_CONFIG) -> HardwareContext:
-    """按配置组装一份可直接供流程层使用的硬件上下文。"""
+    """完成底层驱动、引脚对象和上层硬件封装的整套初始化。"""
 
+    # 1. 初始化 I2C 设备。
     valve_io = TCA9555(i2c_bus=config.tca.bus, addr=config.tca.valve_addr)
     control_io = TCA9555(i2c_bus=config.tca.bus, addr=config.tca.control_addr)
     ads1115 = ADS1115(i2c_bus=config.ads.bus, addr=config.ads.addr)
     ads1115.set_gain(config.ads.gain)
 
+    # 2. 构建阀门与控制脚抽象。
     valves = _build_tca_pins(valve_io, config.tca.valve_pins)
     optics_controls = _build_tca_pins(
         control_io,
@@ -135,9 +182,11 @@ def init_hardware(config: AppConfig = DEFAULT_CONFIG) -> HardwareContext:
             "digest_light": config.tca.control_pins["digest_light"],
             "digest_ref_amp": config.tca.control_pins["digest_ref_amp"],
             "digest_main_amp": config.tca.control_pins["digest_main_amp"],
+            "digest_heat": config.tca.control_pins["digest_heat"],
         },
     )
 
+    # 3. 构建泵驱动所需的步进电机控制对象。
     pul_pin = GpiodPin(
         config.pump.pulse_pin,
         consumer="recipe_stepper_pul",
@@ -169,6 +218,7 @@ def init_hardware(config: AppConfig = DEFAULT_CONFIG) -> HardwareContext:
 
     pump = Pump(driver=stepper, aspirate_direction=config.pump.aspirate_direction)
 
+    # 4. 构建温度采集链路。
     spi = SoftSPI(
         sclk=GpiodPin(
             config.temperature.sclk_pin,
@@ -199,15 +249,25 @@ def init_hardware(config: AppConfig = DEFAULT_CONFIG) -> HardwareContext:
         filter_frequency=config.temperature.filter_frequency,
     )
 
+    # 5. 构建流程层实际使用的高层硬件对象。
     valve = ValveBank(valves)
     meter_optics = MeterOptics(
         ads1115,
         upper_channel=config.ads.meter_upper_channel,
         lower_channel=config.ads.meter_lower_channel,
     )
-    digest_optics = DigestOptics(ads1115, channel=config.ads.digest_channel)
+    digest_optics = DigestOptics(
+        ads1115,
+        measure_channel=config.ads.digest_measure_channel,
+        reference_channel=config.ads.digest_reference_channel,
+        light_pin=optics_controls["digest_light"],
+        ref_amp_pin=optics_controls["digest_ref_amp"],
+        main_amp_pin=optics_controls["digest_main_amp"],
+    )
+    heater = HeaterControl(optics_controls["digest_heat"])
     temp_sensor = TemperatureSensor(max31865)
 
+    # 6. 汇总成统一上下文，便于主流程传递。
     return HardwareContext(
         valve_io=valve_io,
         control_io=control_io,
@@ -221,21 +281,30 @@ def init_hardware(config: AppConfig = DEFAULT_CONFIG) -> HardwareContext:
         valve=valve,
         meter_optics=meter_optics,
         digest_optics=digest_optics,
+        heater=heater,
         temp_sensor=temp_sensor,
     )
 
 
 def cleanup_hardware(ctx: HardwareContext | None) -> None:
-    """统一关闭和清理硬件资源。"""
+    """按安全优先顺序尽量关闭所有硬件资源。"""
 
     if not ctx:
         return
 
     try:
+        # 先关加热，避免收尾过程中继续升温。
+        ctx.heater.off()
+    except Exception:
+        pass
+
+    try:
+        # 再关闭全部阀门，恢复液路安全态。
         ctx.valve.close_all()
     except Exception:
         pass
 
+    # 引脚对象逐个释放，即使局部失败也继续执行后续清理。
     for pin in ctx.optics_controls.values():
         try:
             pin.close()
@@ -275,12 +344,12 @@ def cleanup_hardware(ctx: HardwareContext | None) -> None:
 
 
 def build_hardware(config: AppConfig | None = None) -> HardwareContext:
-    """对外提供统一的硬件构建入口。"""
+    """对外暴露的硬件构建入口。"""
 
     return init_hardware(DEFAULT_CONFIG if config is None else config)
 
 
 def safe_shutdown(ctx: HardwareContext | None) -> None:
-    """对外提供统一的安全关闭入口。"""
+    """对外暴露的安全关机入口。"""
 
     cleanup_hardware(ctx)

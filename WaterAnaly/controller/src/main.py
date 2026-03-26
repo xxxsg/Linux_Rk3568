@@ -1,145 +1,154 @@
 from __future__ import annotations
 
-from config import DEFAULT_CONFIG
+import logging
+import math
+
+from config import DEFAULT_CONFIG, configure_logging
 from hardware import build_hardware, safe_shutdown
 from primitives import (
+    DigestSignal,
     add_to_digestor,
     aerate_digestor,
     close_all_valves,
     empty_digestor,
     flush_pipeline,
     heat_and_hold,
-    read_digest_value,
+    read_digest_signal,
     rinse_to_waste,
     sleep_ms,
 )
 
 
-def compute_concentration(absorbance: float, standard_concentration: float) -> float:
-    """把读数结果换算为浓度。
+logger = logging.getLogger(__name__)
 
-    这里先保留当前项目使用的简化线性算法，
-    让主流程先有一个稳定的结果出口。
 
-    如果后面要接入 `Agent.md` 里的正式吸光度公式，
-    优先改这个函数，不要把公式散落到主流程步骤里。
-    """
+def compute_absorbance(signal: DigestSignal) -> float:
+    """按双通道公式计算吸光度。"""
 
-    return absorbance * standard_concentration
+    measure_ratio = (signal.vbias_m - signal.vm_0) / (signal.vbias_m - signal.vm_s)
+    reference_ratio = (signal.vbias_r - signal.vr_0) / (signal.vbias_r - signal.vr_s)
+    ratio = measure_ratio / reference_ratio
+    if ratio <= 0:
+        raise ValueError(f"invalid absorbance ratio: {ratio}")
+    return -math.log10(ratio)
+
+
+def compute_concentration(signal: DigestSignal, a: float = 1.0, b: float = 1.0) -> float:
+    """按公式 `C = (A - a) / b` 计算浓度。"""
+
+    if b == 0:
+        raise ValueError("calibration b must not be zero")
+    absorbance = compute_absorbance(signal)
+    return (absorbance - a) / b
 
 
 def clean_system(ctx) -> None:
-    """执行一次基础系统清洗。
-
-    这个动作会在两个阶段复用：
-    - 开机后先清洗一次，把系统带到可分析的起始状态
-    - 全流程结束后再清洗一次，作为收尾
-
-    清洗步骤本身很简单：
-    1. 把清洗液送入消解器
-    2. 停留一段时间，让液体覆盖关键液路
-    3. 把消解器排空
-    4. 再对主管路做几轮冲洗
-    """
+    """执行一轮系统清洗。"""
 
     recipe = DEFAULT_CONFIG.recipe
     timing = DEFAULT_CONFIG.timing
 
+    logger.info("开始系统清洗")
     add_to_digestor(ctx, recipe.clean_source, "large")
     sleep_ms(timing.clean_pause_ms)
     empty_digestor(ctx, recipe.waste_valve)
     flush_pipeline(ctx, recipe.clean_source, recipe.waste_valve, times=3, volume="large")
+    logger.info("系统清洗完成")
 
 
-def run_water_analysis(ctx, standard_concentration: float | None = None) -> dict[str, float]:
-    """按项目定义的主工艺顺序完成一次完整分析。
-
-    这个函数是流程层入口，负责把各个基础动作串成一条完整工艺链。
-    它只关心两类事情：
-    - 步骤顺序是否符合工艺定义
-    - 结束时是否安全收尾并返回结果
-
-    它不应该直接处理底层 pin、ADC 通道号或电机方向，
-    这些细节都应该留在 `hardware.py` 和 `primitives.py` 中。
-    """
+def run_water_analysis(ctx, a: float | None = None, b: float | None = None) -> dict[str, float]:
+    """执行完整的水质分析流程。"""
 
     recipe = DEFAULT_CONFIG.recipe
     timing = DEFAULT_CONFIG.timing
-    standard_concentration = (
-        recipe.standard_concentration if standard_concentration is None else standard_concentration
-    )
+    analysis = DEFAULT_CONFIG.analysis
+    a = analysis.calibration_a if a is None else a
+    b = analysis.calibration_b if b is None else b
 
-    # 先统一关阀，避免继承上一次运行遗留的液路状态。
+    logger.info("开始执行水质分析流程")
     close_all_valves(ctx)
 
-    # 0) 开机清洗：先把整个系统带到一个较干净、较稳定的起点。
+    # 1. 流程开始前先清洗一次系统。
     clean_system(ctx)
 
-    # 1) 水样流程：先小体积润洗支路，再正式把水样送入消解器。
+    # 2. 依次加入样品和标准液。
     rinse_to_waste(ctx, recipe.sample_source, recipe.waste_valve)
     add_to_digestor(ctx, recipe.sample_source, "large")
-
-    # 2) 标液流程：和水样一样，先润洗再正式加入。
     rinse_to_waste(ctx, recipe.standard_source, recipe.waste_valve)
     add_to_digestor(ctx, recipe.standard_source, "large")
 
-    # 3) 试剂 A：加完后额外做冲洗，尽量减少残液挂壁和交叉污染。
+    # 3. 加入试剂 A，并冲洗主通路。
     rinse_to_waste(ctx, recipe.reagent_a_source, recipe.waste_valve)
     add_to_digestor(ctx, recipe.reagent_a_source, "large")
     flush_pipeline(ctx, recipe.flush_source, recipe.waste_valve, times=2, volume="large")
 
-    # 4) 升温保温：等待消解器达到目标温度，并保持足够的反应时间。
+    # 4. 进入加热消解阶段。
     heat_and_hold(ctx, target_temp_c=recipe.digest_target_temp_c, hold_ms=timing.heat_hold_ms)
 
-    # 5) 试剂 B：继续按“润洗 -> 加入 -> 冲洗”的模式执行。
+    # 5. 加入试剂 B。
     rinse_to_waste(ctx, recipe.reagent_b_source, recipe.waste_valve)
     add_to_digestor(ctx, recipe.reagent_b_source, "large")
     flush_pipeline(ctx, recipe.flush_source, recipe.waste_valve, times=1, volume="large")
 
-    # 6) 静置反应：拆成前后两段，中间穿插一次通气搅拌。
-    # 这样既保留静置时间，也给反应体系一次重新混匀的机会。
+    # 6. 静置反应，中途通气搅拌一次。
     sleep_ms(timing.digest_settle_total_ms / 2)
     aerate_digestor(ctx, timing.stir_duration_ms)
     sleep_ms(timing.digest_settle_total_ms / 2)
 
-    # 7) 试剂 C：最后一轮加药，做法和前面保持一致。
+    # 7. 加入试剂 C，准备最终读数。
     rinse_to_waste(ctx, recipe.reagent_c_source, recipe.waste_valve)
     add_to_digestor(ctx, recipe.reagent_c_source, "large")
     flush_pipeline(ctx, recipe.flush_source, recipe.waste_valve, times=2, volume="large")
 
-    # 8) 读数与换算：先读取消解器结果，再统一交给算法函数处理。
-    absorbance = read_digest_value(ctx)
-    concentration = compute_concentration(absorbance, standard_concentration)
+    # 8. 读取 6 个电压并计算结果。
+    signal = read_digest_signal(ctx)
+    logger.info(
+        "消解读数完成: vbias_m=%.6f vbias_r=%.6f vm_0=%.6f vr_0=%.6f vm_s=%.6f vr_s=%.6f",
+        signal.vbias_m,
+        signal.vbias_r,
+        signal.vm_0,
+        signal.vr_0,
+        signal.vm_s,
+        signal.vr_s,
+    )
+    absorbance = compute_absorbance(signal)
+    concentration = compute_concentration(signal, a=a, b=b)
 
-    # 9) 收尾：排空当前反应液，做一次系统清洗，最后统一关阀。
+    # 9. 排空并再次清洗，恢复安全状态。
     empty_digestor(ctx, recipe.waste_valve)
     clean_system(ctx)
     close_all_valves(ctx)
 
+    logger.info("水质分析流程结束: absorbance=%.6f concentration=%.6f", absorbance, concentration)
     return {
+        "vbias_m": signal.vbias_m,
+        "vbias_r": signal.vbias_r,
+        "vm_0": signal.vm_0,
+        "vr_0": signal.vr_0,
+        "vm_s": signal.vm_s,
+        "vr_s": signal.vr_s,
         "absorbance": absorbance,
         "concentration": concentration,
     }
 
 
 def main() -> None:
-    """脚本入口。
-
-    统一负责三件事：
-    - 组装本次运行需要的硬件上下文
-    - 执行一轮完整分析流程
-    - 无论中间是否报错，最后都做安全关闭
-    """
+    """程序主入口。"""
 
     ctx = None
+    configure_logging(DEFAULT_CONFIG)
     try:
         ctx = build_hardware(DEFAULT_CONFIG)
         result = run_water_analysis(
             ctx,
-            standard_concentration=DEFAULT_CONFIG.recipe.standard_concentration,
+            a=DEFAULT_CONFIG.analysis.calibration_a,
+            b=DEFAULT_CONFIG.analysis.calibration_b,
         )
-        print(f"[RESULT] absorbance={result['absorbance']:.2f}")
-        print(f"[RESULT] concentration={result['concentration']:.2f}")
+        logger.info("最终结果 absorbance=%.6f", result["absorbance"])
+        logger.info("最终结果 concentration=%.6f", result["concentration"])
+    except Exception:
+        logger.exception("主流程执行失败")
+        raise
     finally:
         safe_shutdown(ctx)
 
