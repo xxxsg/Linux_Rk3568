@@ -515,6 +515,25 @@ def test_meter_debug(ctx: HardwareContext) -> None:
         wet_light_readings,
     )
 
+    wait_enter("步骤 7：将计量单元液体排到废液。")
+    route_meter_to_targets(ctx, [recipe.waste_valve])
+    worker = start_pump_in_background(ctx.pump.dispense_continuous)
+    try:
+        empty_ok = wait_until(
+            lambda: is_meter_empty(ctx),
+            TEST_CONFIG.timing.dispense_timeout_ms,
+            poll_ms=50,
+        )
+    finally:
+        ctx.pump.stop()
+        worker.join(timeout=2.0)
+        close_all_flow_valves(ctx)
+
+    if empty_ok:
+        logger.info("计量单元调试排水完成")
+    else:
+        logger.warning("计量单元调试排水超时，请现场确认液路状态")
+
     ctx.optics_controls["meter_up"].write(False)
     ctx.optics_controls["meter_down"].write(False)
 
