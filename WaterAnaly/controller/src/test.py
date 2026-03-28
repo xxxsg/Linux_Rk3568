@@ -690,7 +690,7 @@ def run_test_by_name(ctx: HardwareContext, test_name: str) -> None:
     elif test_name == "meter_debug":
         test_meter_debug(ctx)
     elif test_name == "pump":
-        test_pump(ctx, forward_s=3.0, reverse_s=5.0)
+        test_pump(ctx, forward_s=5.0, reverse_s=5.0)
     elif test_name == "flow":
         test_flow(ctx)
     elif test_name == "heat":
