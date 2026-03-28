@@ -91,6 +91,7 @@ class TcaConfig:
 
 @dataclass(frozen=True)
 class PumpConfig:
+    
     pulse_pin: tuple[str, int] = ("/dev/gpiochip1", 1)  # 步进脉冲输出引脚
     steps_per_rev: int = 800  # 电机每转对应的细分步数
     rpm: int = 300  # 泵运行转速
