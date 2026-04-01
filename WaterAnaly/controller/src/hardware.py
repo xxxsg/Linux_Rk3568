@@ -197,19 +197,14 @@ def init_hardware(config: AppConfig = DEFAULT_CONFIG) -> HardwareContext:
         config.tca.control_pins["stepper_dir"],
         initial_value=False,
     )
-    # ENA 引脚悬空，不使用使能控制
-    ena_pin = None
 
     stepper = Stepper(
         pul_pin=pul_pin,
         dir_pin=dir_pin,
-        ena_pin=ena_pin,
         steps_per_rev=config.pump.steps_per_rev,
     )
     stepper.configure_driver(
         dir_high_forward=True,
-        # 不使用ENA控制
-        auto_enable=False,
     )
     stepper.set_rpm(config.pump.rpm)
 

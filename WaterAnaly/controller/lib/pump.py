@@ -128,12 +128,8 @@ class Pump:
         self._driver.run_continuous(direction=self._aspirate_direction)
 
     def stop(self) -> None:
-        """请求当前动作尽快平滑停止。"""
+        """停止运动。"""
         self._driver.stop()
-
-    def emergency_stop(self) -> None:
-        """立即急停，并关闭底层电机使能。"""
-        self._driver.emergency_stop()
 
     def cleanup(self) -> None:
         """清理底层驱动及相关引脚资源。"""

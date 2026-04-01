@@ -564,7 +564,7 @@ def test_pump(ctx: HardwareContext, forward_s: float = 3.0, reverse_s: float = 5
     try:
         prompt_optional("")
     finally:
-        ctx.pump.emergency_stop()
+        ctx.pump.stop()
         worker.join(timeout=2.0)
         logger.info("泵已停止")
 
