@@ -338,19 +338,17 @@ def test_valve_low(ctx: HardwareContext) -> None:
 
 
 def test_set_all_low_except_pul(ctx: HardwareContext) -> None:
-    """临时调试：除 PUL 原生 GPIO 外，所有 GpiodPin 引脚置低。"""
+    """临时调试：除 PUL 原生 GPIO 外，所有 GpiodPin 输出引脚置低。"""
 
     logger.info("=== 临时：除 PUL 外所有 GpiodPin 置低 ===")
-    # SoftSPI 的 4 个引脚（sclk, mosi, miso, cs）全部置低
+    # SoftSPI 的输出引脚置低（跳过 MISO 输入引脚）
     ctx.spi.sclk.low()
     logger.info("SPI SCLK -> 低")
     ctx.spi.mosi.low()
     logger.info("SPI MOSI -> 低")
-    ctx.spi.miso.low()
-    logger.info("SPI MISO -> 低")
     ctx.spi.cs.low()
     logger.info("SPI CS -> 低")
-    logger.info("完成：PUL 引脚（/dev/gpiochip1 pin 1）保持不变，其余 GpiodPin 均已置低")
+    logger.info("完成：PUL 和 MISO（输入）保持不变，其余 GpiodPin 输出引脚均已置低")
 
 
 # ==================== 手动泵测试 (8-9) ====================
