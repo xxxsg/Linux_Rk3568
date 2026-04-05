@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 TEST_CONFIG = replace(
     DEFAULT_CONFIG,
-    logging=replace(DEFAULT_CONFIG.logging, DEBUG=True),
+    logging=replace(DEFAULT_CONFIG.logging, DEBUG=DEFAULT_CONFIG.logging.DEBUG),
 )
 
 VALVE_LABELS = {
