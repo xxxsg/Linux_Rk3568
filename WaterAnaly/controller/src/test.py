@@ -77,6 +77,7 @@ TEST_ITEMS = [
     ("7", "valve_low", "液路阀单口设置为低电平"),
     ("8", "meter_aspirate_manual", "吸液到计量单元（回车停止）"),
     ("9", "force_dispense", "强制排液（回车停止）"),
+    ("10", "set_all_low_except_pul", "临时：除 PUL 外所有引脚置低"),
     ("11", "meter_light_off", "计量单元 - 关灯测电压"),
     ("12", "meter_light_on", "计量单元 - 开灯测电压"),
     ("13", "meter_aspirate_small", "计量单元 - 吸水自动停止（少量）"),
@@ -334,6 +335,22 @@ def test_valve_low(ctx: HardwareContext) -> None:
     pin = ctx.valves[name]
     pin.write(False)
     logger.info("已将 pin %s: %s (%s) 设置为低电平", pin_number, label, name)
+
+
+def test_set_all_low_except_pul(ctx: HardwareContext) -> None:
+    """临时调试：除 PUL 原生 GPIO 外，所有 GpiodPin 引脚置低。"""
+
+    logger.info("=== 临时：除 PUL 外所有 GpiodPin 置低 ===")
+    # SoftSPI 的 4 个引脚（sclk, mosi, miso, cs）全部置低
+    ctx.spi.sclk.low()
+    logger.info("SPI SCLK -> 低")
+    ctx.spi.mosi.low()
+    logger.info("SPI MOSI -> 低")
+    ctx.spi.miso.low()
+    logger.info("SPI MISO -> 低")
+    ctx.spi.cs.low()
+    logger.info("SPI CS -> 低")
+    logger.info("完成：PUL 引脚（/dev/gpiochip1 pin 1）保持不变，其余 GpiodPin 均已置低")
 
 
 # ==================== 手动泵测试 (8-9) ====================
@@ -625,6 +642,7 @@ def run_test_by_name(ctx: HardwareContext, test_name: str) -> None:
         "control": test_control_pins,
         "valve_high": test_valve_high,
         "valve_low": test_valve_low,
+        "set_all_low_except_pul": test_set_all_low_except_pul,
         "meter_aspirate_manual": test_meter_aspirate_manual,
         "force_dispense": test_force_dispense,
         "meter_light_off": test_meter_light_off,
