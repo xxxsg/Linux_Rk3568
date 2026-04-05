@@ -80,23 +80,46 @@ def close_all_valves(ctx: HardwareContext) -> None:
     ctx.valve.close_all()
 
 
-def is_meter_full(ctx: HardwareContext, volume: str) -> bool:
-    """判断计量单元是否达到目标液位。"""
-
+def is_meter_full(ctx: HardwareContext, volume: str, baseline_mv: float | None = None) -> bool:
+    """判断计量单元是否达到目标液位。
+    
+    baseline_mv 为吸液前读取的固定基准电压，若不传则实时读取。
+    当电压下降百分比超过阈值时判定到位。
+    """
     thresholds = DEFAULT_CONFIG.thresholds
+    change_pct = thresholds.voltage_change_percent / 100.0  # 转换为小数
+    
     if volume == "large":
-        return stable_truth(lambda: ctx.meter_optics.read_upper_mv() <= thresholds.upper_full_mv)
+        baseline = baseline_mv if baseline_mv is not None else ctx.meter_optics.read_upper_mv()
+        if baseline == 0:
+            return False  # 避免除零
+        target_mv = baseline * (1 - change_pct)  # 电压下降到该值视为到位
+        return stable_truth(lambda: ctx.meter_optics.read_upper_mv() <= target_mv)
+    
     if volume == "small":
-        return stable_truth(lambda: ctx.meter_optics.read_lower_mv() <= thresholds.lower_full_mv)
+        baseline = baseline_mv if baseline_mv is not None else ctx.meter_optics.read_lower_mv()
+        if baseline == 0:
+            return False  # 避免除零
+        target_mv = baseline * (1 - change_pct)  # 电压下降到该值视为到位
+        return stable_truth(lambda: ctx.meter_optics.read_lower_mv() <= target_mv)
+    
     raise ValueError(f"unsupported volume: {volume}")
 
 
-def is_meter_empty(ctx: HardwareContext) -> bool:
-    """判断计量单元是否已经排空。"""
-
-    return stable_truth(
-        lambda: ctx.meter_optics.read_upper_mv() >= DEFAULT_CONFIG.thresholds.empty_mv,
-    )
+def is_meter_empty(ctx: HardwareContext, baseline_mv: float | None = None) -> bool:
+    """判断计量单元是否已经排空。
+    
+    baseline_mv 为排液前读取的固定基准电压，若不传则实时读取。
+    当电压回升百分比超过阈值时判定排空。
+    """
+    thresholds = DEFAULT_CONFIG.thresholds
+    change_pct = thresholds.voltage_change_percent / 100.0  # 转换为小数
+    
+    baseline = baseline_mv if baseline_mv is not None else ctx.meter_optics.read_upper_mv()
+    if baseline == 0:
+        return False  # 避免除零
+    target_mv = baseline * (1 + change_pct)  # 电压回升到该值视为排空
+    return stable_truth(lambda: ctx.meter_optics.read_upper_mv() >= target_mv)
 
 
 # ==================== 液路路由元语层 ====================
@@ -152,10 +175,11 @@ def aspirate(ctx: HardwareContext, source_name: str, volume: str) -> None:
     """从指定液源吸液到计量单元。
 
     流程：
-    1. 切换到“液源 -> 计量单元”
-    2. 后台启动连续吸液
-    3. 轮询液位是否到达目标位置
-    4. 无论成功或失败，都停泵并关闭阀门
+    1. 切换到"液源 -> 计量单元"
+    2. 读取当前空管基准电压
+    3. 后台启动连续吸液
+    4. 轮询液位是否到达目标位置
+    5. 无论成功或失败，都停泵并关闭阀门
     """
 
     timeout_ms = (
@@ -165,9 +189,14 @@ def aspirate(ctx: HardwareContext, source_name: str, volume: str) -> None:
     )
 
     route_source_to_meter(ctx, source_name)
+    # 吸液前读取固定基准电压，避免轮询过程中基准漂移
+    if volume == "large":
+        baseline = ctx.meter_optics.read_upper_mv()
+    else:
+        baseline = ctx.meter_optics.read_lower_mv()
     worker = start_pump_in_background(ctx.pump.aspirate_continuous)
     try:
-        ok = wait_until(lambda: is_meter_full(ctx, volume), timeout_ms, poll_ms=50)
+        ok = wait_until(lambda: is_meter_full(ctx, volume, baseline), timeout_ms, poll_ms=50)
     finally:
         ctx.pump.stop()
         worker.join(timeout=2.0)
@@ -181,10 +210,12 @@ def dispense(ctx: HardwareContext, targets: list[str]) -> None:
     """将计量单元中的液体排到目标端。"""
 
     route_meter_to_targets(ctx, targets)
+    # 排液前读取固定基准电压（有液状态），避免轮询过程中基准漂移
+    baseline = ctx.meter_optics.read_upper_mv()
     worker = start_pump_in_background(ctx.pump.dispense_continuous)
     try:
         ok = wait_until(
-            lambda: is_meter_empty(ctx),
+            lambda: is_meter_empty(ctx, baseline),
             DEFAULT_CONFIG.timing.dispense_timeout_ms,
             poll_ms=50,
         )
@@ -240,10 +271,12 @@ def pull_digestor_to_meter(ctx: HardwareContext) -> None:
     """将消解器中的液体回抽到计量单元。"""
 
     route_digestor_to_meter(ctx)
+    # 回抽前读取固定基准电压（空管状态）
+    baseline = ctx.meter_optics.read_upper_mv()
     worker = start_pump_in_background(ctx.pump.aspirate_continuous)
     try:
         ok = wait_until(
-            lambda: is_meter_full(ctx, "large"),
+            lambda: is_meter_full(ctx, "large", baseline),
             DEFAULT_CONFIG.timing.pull_digestor_timeout_ms,
             poll_ms=50,
         )

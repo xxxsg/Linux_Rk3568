@@ -39,9 +39,7 @@ class TimingConfig:
 
 @dataclass(frozen=True)
 class ThresholdConfig:
-    upper_full_mv: float = 1200.0  # 上液位光电阈值，低于该值视为大体积到位
-    lower_full_mv: float = 1200.0  # 下液位光电阈值，低于该值视为小体积到位
-    empty_mv: float = 2200.0  # 排空阈值，高于该值视为计量单元已空
+    voltage_change_percent: float = 3.0  # 电压变化百分比阈值，超过该值视为液位到位/排空
 
 
 @dataclass(frozen=True)

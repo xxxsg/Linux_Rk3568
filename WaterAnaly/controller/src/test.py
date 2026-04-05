@@ -239,16 +239,14 @@ def test_tca9555_pins(ctx: HardwareContext) -> None:
         pin.write(False)
         logger.info("已关闭 pin %s: %s (%s)", pin_number, label, name)
 
-    control_pin_order = list(TEST_CONFIG.tca.control_pins.items())
-    for name, pin_number in control_pin_order:
-        pin = ctx.optics_controls[name]
+    for name, pin in ctx.optics_controls.items():
         label = CONTROL_LABELS.get(name, name)
-        wait_enter(f"准备拉高控制 pin {pin_number}: {label} ({name})。")
+        wait_enter(f"准备拉高控制 {label} ({name})。")
         pin.write(True)
-        logger.info("已拉高 pin %s: %s (%s)", pin_number, label, name)
-        wait_enter(f"准备拉低控制 pin {pin_number}: {label} ({name})。")
+        logger.info("已拉高 %s: %s", label, name)
+        wait_enter(f"准备拉低控制 {label} ({name})。")
         pin.write(False)
-        logger.info("已拉低 pin %s: %s (%s)", pin_number, label, name)
+        logger.info("已拉低 %s: %s", label, name)
 
 
 def test_control_pins(ctx: HardwareContext) -> None:
