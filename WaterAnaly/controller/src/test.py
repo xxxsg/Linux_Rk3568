@@ -9,7 +9,6 @@ import sys
 import threading
 import time
 from dataclasses import replace
-from typing import Any
 
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -20,21 +19,19 @@ if PROJECT_ROOT not in sys.path:
 from config import DEFAULT_CONFIG, configure_logging
 from hardware import HardwareContext, VALVE_PIN_ORDER, build_hardware, cleanup_hardware
 from lib.ADS1115 import ADS1115_REG_CONFIG_PGA_4_096V
-from lib.pins import Tca9555Pin
 from main import compute_absorbance, compute_concentration
 from primitives import (
+    RecipeError,
     add_to_digestor,
+    aspirate,
     close_all_valves,
     empty_digestor,
     heat_and_hold,
-    is_meter_full,
-    is_meter_empty,
+    pull_digestor_to_meter,
     read_digest_signal,
-    rinse_to_waste,
     route_meter_to_targets,
     route_source_to_meter,
     start_pump_in_background,
-    wait_until,
 )
 
 
@@ -44,8 +41,6 @@ TEST_CONFIG = replace(
     DEFAULT_CONFIG,
     logging=replace(DEFAULT_CONFIG.logging, DEBUG=True),
 )
-
-CONTROL_PIN_ORDER = list(TEST_CONFIG.tca.control_pins.items())
 
 VALVE_LABELS = {
     "dissolver": "消解器主阀",
@@ -73,22 +68,30 @@ CONTROL_LABELS = {
 }
 
 TEST_ITEMS = [
-    ("1", "ads", "ADS1115 四路电压读取测试"),
-    ("2", "spi", "SoftSPI 与 MAX31865 寄存器通信测试"),
-    ("3", "max", "MAX31865 温度采集测试"),
-    ("4", "valves", "TCA9555 全部 IO 测试（valve_pins + control_pins）"),
-    ("5", "valve_only", "液路阀单口测试（指定一个 IO 口）"),
-    ("6", "control", "控制 IO 逐个测试（TcaConfig.control_pins 全量）"),
-    ("7", "force_dispense", "强制排液测试"),
-    ("8", "meter", "计量单元专项测试"),
-    ("9", "meter_debug", "计量单元调试"),
-    ("10", "pump", "蠕动泵正反转与连续运转测试"),
-    ("11", "flow", "简化液路流程测试"),
-    ("12", "heat", "加热到目标温度测试"),
-    ("13", "all", "顺序执行全部自动测试项"),
-    ("0", "quit", "退出测试菜单"),
+    ("1", "ads", "ADS1115 四路电压读取"),
+    ("2", "spi", "SoftSPI 寄存器通信"),
+    ("3", "max", "MAX31865 温度采集"),
+    ("4", "valves", "TCA9555 全部 IO 测试"),
+    ("5", "control", "控制 IO 逐个测试"),
+    ("6", "valve_high", "液路阀单口设置为高电平"),
+    ("7", "valve_low", "液路阀单口设置为低电平"),
+    ("8", "meter_aspirate_manual", "吸液到计量单元（回车停止）"),
+    ("9", "force_dispense", "强制排液（回车停止）"),
+    ("11", "meter_light_off", "计量单元 - 关灯测电压"),
+    ("12", "meter_light_on", "计量单元 - 开灯测电压"),
+    ("13", "meter_aspirate_small", "计量单元 - 吸水自动停止（少量）"),
+    ("14", "meter_aspirate_large", "计量单元 - 吸水自动停止（大量）"),
+    ("21", "digest_add", "消解 - 吸水到消解器"),
+    ("22", "digest_pull", "消解 - 从消解器回抽"),
+    ("23", "heat_short", "消解 - 加热 30 秒"),
+    ("24", "heat_to_target", "消解 - 加热到 50°C"),
+    ("25", "digest_read", "消解 - 完整读数"),
+    ("0", "quit", "退出"),
 ]
 TEST_MENU = {menu_no: (test_name, title) for menu_no, test_name, title in TEST_ITEMS}
+
+# 批量执行时跳过的交互项
+INTERACTIVE_TESTS = {"valve_high", "valve_low", "meter_aspirate_manual", "force_dispense"}
 
 
 class AbortCurrentTest(Exception):
@@ -143,16 +146,6 @@ def read_meter_voltages(
     return readings
 
 
-def log_meter_voltages(title: str, ctx: HardwareContext) -> tuple[float, float]:
-    """打印计量单元 5 次原始电压，并返回最后一次读数。"""
-
-    readings = read_meter_voltages(ctx)
-    logger.info("%s", title)
-    for index, (upper_mv, lower_mv) in enumerate(readings, start=1):
-        logger.info("第 %s 次: 上液位 = %.3f mV, 下液位 = %.3f mV", index, upper_mv, lower_mv)
-    return readings[-1]
-
-
 def capture_meter_voltages(title: str, ctx: HardwareContext) -> list[tuple[float, float]]:
     """打印计量单元 5 次原始电压，并返回全部读数。"""
 
@@ -163,66 +156,7 @@ def capture_meter_voltages(title: str, ctx: HardwareContext) -> list[tuple[float
     return readings
 
 
-def _calc_transmission_percent(dark_mv: float, light_mv: float, ref_dark_mv: float, ref_light_mv: float) -> float | None:
-    """按暗电压扣除后的相对光强估算透光比。"""
-
-    ref_signal = ref_light_mv - ref_dark_mv
-    cur_signal = light_mv - dark_mv
-    if ref_signal <= 0:
-        return None
-    return cur_signal / ref_signal * 100.0
-
-
-def log_meter_transmission(
-    title: str,
-    dry_dark_readings: list[tuple[float, float]],
-    dry_light_readings: list[tuple[float, float]],
-    wet_dark_readings: list[tuple[float, float]],
-    wet_light_readings: list[tuple[float, float]],
-) -> None:
-    """逐次打印按暗电压扣除后的相对透光比。"""
-
-    logger.info("%s", title)
-    for index, (dry_dark, dry_light, wet_dark, wet_light) in enumerate(
-        zip(dry_dark_readings, dry_light_readings, wet_dark_readings, wet_light_readings),
-        start=1,
-    ):
-        upper_t = _calc_transmission_percent(dry_dark[0], dry_light[0], dry_dark[0], dry_light[0])
-        lower_t = _calc_transmission_percent(dry_dark[1], dry_light[1], dry_dark[1], dry_light[1])
-        wet_upper_t = _calc_transmission_percent(wet_dark[0], wet_light[0], dry_dark[0], dry_light[0])
-        wet_lower_t = _calc_transmission_percent(wet_dark[1], wet_light[1], dry_dark[1], dry_light[1])
-        logger.info(
-            "第 %s 次: 干态上液位 = %s%%, 干态下液位 = %s%%, 吸水后上液位 = %s%%, 吸水后下液位 = %s%%",
-            index,
-            "100.000" if upper_t is not None else "N/A",
-            "100.000" if lower_t is not None else "N/A",
-            f"{wet_upper_t:.3f}" if wet_upper_t is not None else "N/A",
-            f"{wet_lower_t:.3f}" if wet_lower_t is not None else "N/A",
-        )
-
-
-def wait_meter_light_change(
-    ctx: HardwareContext,
-    base_upper_mv: float,
-    base_lower_mv: float,
-    timeout_s: float = 3.0,
-    change_threshold_mv: float = 20.0,
-) -> tuple[bool, float, float]:
-    """等待计量单元光源状态切换引起的电压变化。"""
-
-    deadline = time.monotonic() + timeout_s
-    latest_upper_mv = base_upper_mv
-    latest_lower_mv = base_lower_mv
-
-    while time.monotonic() < deadline:
-        latest_upper_mv, latest_lower_mv = log_meter_voltages("检测光源变化中：", ctx)
-        upper_changed = abs(latest_upper_mv - base_upper_mv) >= change_threshold_mv
-        lower_changed = abs(latest_lower_mv - base_lower_mv) >= change_threshold_mv
-        if upper_changed or lower_changed:
-            return True, latest_upper_mv, latest_lower_mv
-
-    return False, latest_upper_mv, latest_lower_mv
-
+# ==================== 基础测试 (1-5) ====================
 
 def test_ads1115(ctx: HardwareContext) -> None:
     """读取 4 路 ADC 电压，确认 ADS1115 工作正常。"""
@@ -232,24 +166,6 @@ def test_ads1115(ctx: HardwareContext) -> None:
     for channel in range(4):
         voltage_mv = ctx.ads1115.read_voltage(channel)
         logger.info("AIN%s = %s mV", channel, voltage_mv)
-
-
-def test_max31865(ctx: HardwareContext) -> None:
-    """读取温度和故障寄存器，确认温度采集链路正常。"""
-
-    logger.info("=== MAX31865 测试 ===")
-    raw_rtd = ctx.max31865.read_raw_rtd()
-    resistance = ctx.max31865.read_resistance()
-    fault = ctx.max31865.read_fault()
-    logger.info("原始 RTD = %s", raw_rtd)
-    logger.info("电阻值 = %.4f ohm", resistance)
-    logger.info("故障寄存器 = 0x%02X", fault)
-    try:
-        temperature = ctx.max31865.read_temperature()
-    except ValueError as exc:
-        logger.warning("温度读取失败: %s", exc)
-        return
-    logger.info("温度 = %.2f C", temperature)
 
 
 def test_softspi(ctx: HardwareContext) -> None:
@@ -271,6 +187,24 @@ def test_softspi(ctx: HardwareContext) -> None:
     logger.info("transfer [0x00, 0x00, 0x00, 0x00] -> %s", raw_response)
 
 
+def test_max31865(ctx: HardwareContext) -> None:
+    """读取温度和故障寄存器，确认温度采集链路正常。"""
+
+    logger.info("=== MAX31865 测试 ===")
+    raw_rtd = ctx.max31865.read_raw_rtd()
+    resistance = ctx.max31865.read_resistance()
+    fault = ctx.max31865.read_fault()
+    logger.info("原始 RTD = %s", raw_rtd)
+    logger.info("电阻值 = %.4f ohm", resistance)
+    logger.info("故障寄存器 = 0x%02X", fault)
+    try:
+        temperature = ctx.max31865.read_temperature()
+    except ValueError as exc:
+        logger.warning("温度读取失败: %s", exc)
+        return
+    logger.info("温度 = %.2f C", temperature)
+
+
 def test_tca9555_pins(ctx: HardwareContext) -> None:
     """逐个切换 TcaConfig 里定义的全部 TCA9555 IO。"""
 
@@ -285,8 +219,9 @@ def test_tca9555_pins(ctx: HardwareContext) -> None:
         pin.write(False)
         logger.info("已关闭 pin %s: %s (%s)", pin_number, label, name)
 
-    for name, pin_number in CONTROL_PIN_ORDER:
-        pin = get_control_pin(ctx, name, pin_number)
+    control_pin_order = list(TEST_CONFIG.tca.control_pins.items())
+    for name, pin_number in control_pin_order:
+        pin = ctx.optics_controls[name]
         label = CONTROL_LABELS.get(name, name)
         wait_enter(f"准备拉高控制 pin {pin_number}: {label} ({name})。")
         pin.write(True)
@@ -295,6 +230,24 @@ def test_tca9555_pins(ctx: HardwareContext) -> None:
         pin.write(False)
         logger.info("已拉低 pin %s: %s (%s)", pin_number, label, name)
 
+
+def test_control_pins(ctx: HardwareContext) -> None:
+    """逐个切换控制类引脚，覆盖 TcaConfig 里定义的全部 control_pins。"""
+
+    control_pin_order = list(TEST_CONFIG.tca.control_pins.items())
+    logger.info("=== 控制 IO 测试 ===")
+    for name, pin_number in control_pin_order:
+        pin = ctx.optics_controls[name]
+        label = CONTROL_LABELS.get(name, name)
+        wait_enter(f"准备拉高控制 pin {pin_number}: {label} ({name})。")
+        pin.write(True)
+        logger.info("已拉高 pin %s: %s (%s)", pin_number, label, name)
+        wait_enter(f"准备拉低控制 pin {pin_number}: {label} ({name})。")
+        pin.write(False)
+        logger.info("已拉低 pin %s: %s (%s)", pin_number, label, name)
+
+
+# ==================== 单阀测试 (6-7) ====================
 
 def print_valve_choices() -> None:
     """打印可选液路阀，方便单口测试时输入。"""
@@ -326,12 +279,12 @@ def find_valve_pin(choice: str) -> tuple[str, int] | None:
     return None
 
 
-def test_valve_only(ctx: HardwareContext) -> None:
-    """只测试一个指定液路阀，便于现场快速点测。"""
+def test_valve_high(ctx: HardwareContext) -> None:
+    """选一个液路阀，设置为高电平后自动关闭。"""
 
-    logger.info("=== 液路阀单口测试 ===")
+    logger.info("=== 液路阀单口置高测试 ===")
     print_valve_choices()
-    choice = prompt_optional("请输入要测试的阀编号 / 名称 / 中文标签，输入 q 退出当前测试: ")
+    choice = prompt_optional("请输入阀编号 / 名称 / 中文标签，输入 q 退出: ")
     target = find_valve_pin(choice)
     if target is None:
         logger.warning("未识别的液路阀输入: %s", choice)
@@ -340,42 +293,66 @@ def test_valve_only(ctx: HardwareContext) -> None:
     name, pin_number = target
     label = VALVE_LABELS.get(name, name)
     pin = ctx.valves[name]
-    wait_enter(f"准备打开阀门 pin {pin_number}: {label} ({name})。")
-    pin.write(True)
-    logger.info("已打开 pin %s: %s (%s)", pin_number, label, name)
-    wait_enter(f"准备关闭阀门 pin {pin_number}: {label} ({name})。")
-    pin.write(False)
-    logger.info("已关闭 pin %s: %s (%s)", pin_number, label, name)
-
-
-def get_control_pin(ctx: HardwareContext, name: str, pin_number: int) -> Tca9555Pin:
-    """按名称获取控制 IO，引出 stepper 相关引脚一起测试。"""
-
-    if name in ctx.optics_controls:
-        return ctx.optics_controls[name]
-    return Tca9555Pin(ctx.control_io, pin_number, initial_value=False)
-
-
-def test_control_pins(ctx: HardwareContext) -> None:
-    """逐个切换控制类引脚，覆盖 TcaConfig 里定义的全部 control_pins。"""
-
-    logger.info("=== 控制 IO 测试 ===")
-    for name, pin_number in CONTROL_PIN_ORDER:
-        pin = get_control_pin(ctx, name, pin_number)
-        label = CONTROL_LABELS.get(name, name)
-        wait_enter(f"准备拉高控制 pin {pin_number}: {label} ({name})。")
+    try:
         pin.write(True)
-        logger.info("已拉高 pin %s: %s (%s)", pin_number, label, name)
-        wait_enter(f"准备拉低控制 pin {pin_number}: {label} ({name})。")
+        logger.info("已将 pin %s: %s (%s) 设置为高电平", pin_number, label, name)
+        wait_enter(f"pin {pin_number}: {label} 当前为高电平")
+    finally:
         pin.write(False)
-        logger.info("已拉低 pin %s: %s (%s)", pin_number, label, name)
+        logger.info("已关闭 pin %s: %s (%s)", pin_number, label, name)
+
+
+def test_valve_low(ctx: HardwareContext) -> None:
+    """选一个液路阀，设置为低电平。"""
+
+    logger.info("=== 液路阀单口置低测试 ===")
+    print_valve_choices()
+    choice = prompt_optional("请输入阀编号 / 名称 / 中文标签，输入 q 退出: ")
+    target = find_valve_pin(choice)
+    if target is None:
+        logger.warning("未识别的液路阀输入: %s", choice)
+        return
+
+    name, pin_number = target
+    label = VALVE_LABELS.get(name, name)
+    pin = ctx.valves[name]
+    pin.write(False)
+    logger.info("已将 pin %s: %s (%s) 设置为低电平", pin_number, label, name)
+
+
+# ==================== 手动泵测试 (8-9) ====================
+
+def test_meter_aspirate_manual(ctx: HardwareContext) -> None:
+    """从样品液源吸液到计量单元，回车停止。"""
+
+    recipe = TEST_CONFIG.recipe
+    logger.info("=== 吸液到计量单元（手动停止）===")
+    logger.info("液源: %s (%s)", VALVE_LABELS.get(recipe.sample_source, recipe.sample_source), recipe.sample_source)
+
+    wait_enter("步骤 1：关闭所有液路阀。")
+    close_all_flow_valves(ctx)
+
+    wait_enter("步骤 2：建立液源到计量单元的通路。")
+    route_source_to_meter(ctx, recipe.sample_source)
+    logger.info("已切换到吸液通路")
+
+    prompt_optional("步骤 3：直接按回车开始吸液，输入 q 退出: ")
+    worker = start_pump_in_background(ctx.pump.aspirate_continuous)
+    logger.info("吸液中，回车停止，输入 q 也会停止")
+    try:
+        prompt_optional("")
+    finally:
+        ctx.pump.stop()
+        worker.join(timeout=2.0)
+        close_all_flow_valves(ctx)
+        logger.info("吸液已停止，液路阀已关闭")
 
 
 def test_force_dispense(ctx: HardwareContext) -> None:
     """手动持续排液，直到用户确认停止。"""
 
     recipe = TEST_CONFIG.recipe
-    logger.info("=== 强制排液测试 ===")
+    logger.info("=== 强制排液（回车停止）===")
     logger.info("默认排向 %s (%s)", VALVE_LABELS.get(recipe.waste_valve, recipe.waste_valve), recipe.waste_valve)
 
     wait_enter("步骤 1：关闭所有液路阀。")
@@ -385,233 +362,110 @@ def test_force_dispense(ctx: HardwareContext) -> None:
     route_meter_to_targets(ctx, [recipe.waste_valve])
     logger.info("已切换到排液通路")
 
-    prompt_optional("步骤 3：直接按回车开始强制排液，输入 q 退出当前测试: ")
+    prompt_optional("步骤 3：直接按回车开始排液，输入 q 退出: ")
     worker = start_pump_in_background(ctx.pump.dispense_continuous)
-    logger.info("强制排液中，回车停止，输入 q 也会停止并退出当前测试")
+    logger.info("排液中，回车停止，输入 q 也会停止")
     try:
         prompt_optional("")
     finally:
         ctx.pump.stop()
         worker.join(timeout=2.0)
         close_all_flow_valves(ctx)
-        logger.info("强制排液已停止，液路阀已关闭")
+        logger.info("排液已停止，液路阀已关闭")
 
 
-def test_meter_unit(ctx: HardwareContext) -> None:
-    """计量单元专项测试：不开灯电压、开灯电压、吸水自动停止。"""
+# ==================== 计量单元测试 (11-14) ====================
 
-    recipe = TEST_CONFIG.recipe
-    logger.info("=== 计量单元专项测试 ===")
+def test_meter_light_off(ctx: HardwareContext) -> None:
+    """关闭计量单元光路，读取电压。"""
 
-    wait_enter("步骤 1：关闭所有液路阀。")
-    close_all_flow_valves(ctx)
-
-    wait_enter("步骤 2：关闭计量单元上下光路灯，读取不开灯电压。")
+    logger.info("=== 计量单元 - 关灯测电压 ===")
     ctx.optics_controls["meter_up"].write(False)
     ctx.optics_controls["meter_down"].write(False)
-    dark_upper_mv, dark_lower_mv = log_meter_voltages("不开灯电压：", ctx)
+    capture_meter_voltages("关灯电压：", ctx)
 
-    wait_enter("步骤 3：打开计量单元上下光路灯，读取开灯电压。")
+
+def test_meter_light_on(ctx: HardwareContext) -> None:
+    """打开计量单元光路，读取电压。"""
+
+    logger.info("=== 计量单元 - 开灯测电压 ===")
     ctx.optics_controls["meter_up"].write(True)
     ctx.optics_controls["meter_down"].write(True)
-    changed, light_upper_mv, light_lower_mv = wait_meter_light_change(
-        ctx,
-        dark_upper_mv,
-        dark_lower_mv,
-        timeout_s=3.0,
-    )
-    logger.info("开灯阶段最后一次读数：上液位 = %.3f mV, 下液位 = %.3f mV", light_upper_mv, light_lower_mv)
-    if not changed:
-        logger.warning("3 秒内未检测到计量单元光源变化，停止当前专项测试")
-        ctx.optics_controls["meter_up"].write(False)
-        ctx.optics_controls["meter_down"].write(False)
-        close_all_flow_valves(ctx)
-        return
-
-    wait_enter("步骤 4：开始样品吸水，验证计量单元到位后是否自动停止。")
-    route_source_to_meter(ctx, recipe.sample_source)
-    worker = start_pump_in_background(ctx.pump.aspirate_continuous)
-    try:
-        ok = wait_until(
-            lambda: is_meter_full(ctx, "large"),
-            TEST_CONFIG.timing.take_large_timeout_ms,
-            poll_ms=50,
-        )
-    finally:
-        ctx.pump.stop()
-        worker.join(timeout=2.0)
-        close_all_flow_valves(ctx)
-
-    if ok:
-        logger.info("吸水测试结果：已检测到计量单元到位，泵已自动停止")
-    else:
-        logger.warning("吸水测试结果：在超时时间内未检测到计量单元到位")
-
-    log_meter_voltages("吸水测试结束后的电压：", ctx)
-
-    wait_enter("步骤 5：如需把计量单元液体排空，请准备继续。")
-    route_meter_to_targets(ctx, [recipe.waste_valve])
-    worker = start_pump_in_background(ctx.pump.dispense_continuous)
-    try:
-        empty_ok = wait_until(
-            lambda: is_meter_empty(ctx),
-            TEST_CONFIG.timing.dispense_timeout_ms,
-            poll_ms=50,
-        )
-    finally:
-        ctx.pump.stop()
-        worker.join(timeout=2.0)
-        close_all_flow_valves(ctx)
-        ctx.optics_controls["meter_up"].write(False)
-        ctx.optics_controls["meter_down"].write(False)
-
-    if empty_ok:
-        logger.info("计量单元排空完成")
-    else:
-        logger.warning("计量单元排空超时，请现场确认液路状态")
+    capture_meter_voltages("开灯电压：", ctx)
+    ctx.optics_controls["meter_up"].write(False)
+    ctx.optics_controls["meter_down"].write(False)
 
 
-def test_meter_debug(ctx: HardwareContext) -> None:
-    """计量单元调试：干态/吸水后分别读取关灯与开灯电压。"""
+def test_meter_aspirate_small(ctx: HardwareContext) -> None:
+    """少量吸水到计量单元，验证到位自动停止。"""
 
     recipe = TEST_CONFIG.recipe
-    logger.info("=== 计量单元调试 ===")
+    logger.info("=== 计量单元 - 吸水自动停止（少量）===")
+    logger.info("液源: %s (%s)", VALVE_LABELS.get(recipe.sample_source, recipe.sample_source), recipe.sample_source)
 
-    wait_enter("步骤 1：关闭所有液路阀。")
+    wait_enter("准备开始少量吸水测试。")
     close_all_flow_valves(ctx)
-
-    wait_enter("步骤 2：未吸水且未开灯，读取 5 次电压。")
-    ctx.optics_controls["meter_up"].write(False)
-    ctx.optics_controls["meter_down"].write(False)
-    dry_dark_readings = capture_meter_voltages("干态未开灯电压：", ctx)
-
-    wait_enter("步骤 3：未吸水但开灯，读取 5 次电压。")
-    ctx.optics_controls["meter_up"].write(True)
-    ctx.optics_controls["meter_down"].write(True)
-    dry_light_readings = capture_meter_voltages("干态开灯电压：", ctx)
-
-    wait_enter("步骤 4：按样品通路吸水 3 秒。")
-    route_source_to_meter(ctx, recipe.sample_source)
     try:
-        ctx.pump.aspirate_time(3.0)
+        aspirate(ctx, recipe.sample_source, "small")
+        logger.info("少量吸水完成，已自动停止")
+    except RecipeError as exc:
+        logger.warning("吸水失败: %s", exc)
     finally:
         close_all_flow_valves(ctx)
 
-    wait_enter("步骤 5：吸水后先关灯，读取 5 次电压。")
-    ctx.optics_controls["meter_up"].write(False)
-    ctx.optics_controls["meter_down"].write(False)
-    wet_dark_readings = capture_meter_voltages("吸水后未开灯电压：", ctx)
 
-    wait_enter("步骤 6：吸水后开灯，读取 5 次电压。")
-    ctx.optics_controls["meter_up"].write(True)
-    ctx.optics_controls["meter_down"].write(True)
-    wet_light_readings = capture_meter_voltages("吸水后开灯电压：", ctx)
-
-    log_meter_transmission(
-        "按暗电压扣除后的相对透光比：",
-        dry_dark_readings,
-        dry_light_readings,
-        wet_dark_readings,
-        wet_light_readings,
-    )
-
-    wait_enter("步骤 7：将计量单元液体排到废液。")
-    route_meter_to_targets(ctx, [recipe.waste_valve])
-    worker = start_pump_in_background(ctx.pump.dispense_continuous)
-    try:
-        empty_ok = wait_until(
-            lambda: is_meter_empty(ctx),
-            TEST_CONFIG.timing.dispense_timeout_ms,
-            poll_ms=50,
-        )
-    finally:
-        ctx.pump.stop()
-        worker.join(timeout=2.0)
-        close_all_flow_valves(ctx)
-
-    if empty_ok:
-        logger.info("计量单元调试排水完成")
-    else:
-        logger.warning("计量单元调试排水超时，请现场确认液路状态")
-
-    ctx.optics_controls["meter_up"].write(False)
-    ctx.optics_controls["meter_down"].write(False)
-
-
-def _run_stepper_continuous(stepper: Any, direction: bool) -> None:
-    """后台持续运行步进电机。"""
-
-    stepper.run_continuous(direction=direction)
-
-
-def test_pump(ctx: HardwareContext, forward_s: float = 3.0, reverse_s: float = 5.0) -> None:
-    """测试泵的正转、反转和连续运转。"""
-
-    logger.info("=== 泵测试 ===")
-    logger.info("正转 %.1f 秒", forward_s)
-    ctx.stepper.run_for_time(forward_s, direction=True)
-    time.sleep(0.5)
-    logger.info("反转 %.1f 秒", reverse_s)
-    ctx.stepper.run_for_time(reverse_s, direction=False)
-    time.sleep(0.5)
-    logger.info("进入连续运行，按回车停止，输入 q 也会停止并退出当前测试")
-    worker = threading.Thread(
-        target=_run_stepper_continuous,
-        args=(ctx.stepper, True),
-        daemon=True,
-    )
-    worker.start()
-    try:
-        prompt_optional("")
-    finally:
-        ctx.pump.emergency_stop()
-        worker.join(timeout=2.0)
-        logger.info("泵已停止")
-
-
-def print_digest_measurement(ctx: HardwareContext) -> None:
-    """读取 6 个电压，并按主流程算法打印结果。"""
-
-    signal = read_digest_signal(ctx)
-    absorbance = compute_absorbance(signal)
-    concentration = compute_concentration(signal)
-    logger.info("vbias_m = %.6f", signal.vbias_m)
-    logger.info("vbias_r = %.6f", signal.vbias_r)
-    logger.info("vm_0 = %.6f", signal.vm_0)
-    logger.info("vr_0 = %.6f", signal.vr_0)
-    logger.info("vm_s = %.6f", signal.vm_s)
-    logger.info("vr_s = %.6f", signal.vr_s)
-    logger.info("absorbance = %.6f", absorbance)
-    logger.info("concentration = %.6f", concentration)
-
-
-def test_flow(ctx: HardwareContext) -> None:
-    """按 primitives 原语执行简化 flow 测试。"""
+def test_meter_aspirate_large(ctx: HardwareContext) -> None:
+    """大量吸水到计量单元，验证到位自动停止。"""
 
     recipe = TEST_CONFIG.recipe
-    logger.info("=== Flow 测试 ===")
+    logger.info("=== 计量单元 - 吸水自动停止（大量）===")
+    logger.info("液源: %s (%s)", VALVE_LABELS.get(recipe.sample_source, recipe.sample_source), recipe.sample_source)
 
-    wait_enter("步骤 1：关闭所有液路阀。")
+    wait_enter("准备开始大量吸水测试。")
     close_all_flow_valves(ctx)
+    try:
+        aspirate(ctx, recipe.sample_source, "large")
+        logger.info("大量吸水完成，已自动停止")
+    except RecipeError as exc:
+        logger.warning("吸水失败: %s", exc)
+    finally:
+        close_all_flow_valves(ctx)
 
-    wait_enter("步骤 2：用标一润洗支路并排到废液。")
-    rinse_to_waste(ctx, recipe.flush_source, recipe.waste_valve)
-    logger.info("步骤 2 完成：标一润洗结束")
 
-    wait_enter("步骤 3：将标一加入消解器。")
-    add_to_digestor(ctx, recipe.flush_source, "large")
-    logger.info("步骤 3 完成：标一已加入消解器")
+# ==================== 消解器测试 (21-25) ====================
 
-    wait_enter("步骤 4：读取 6 个电压并计算浓度。")
-    print_digest_measurement(ctx)
+def test_digest_add(ctx: HardwareContext) -> None:
+    """吸水到消解器。"""
 
-    wait_enter("步骤 5：排空消解器到废液。")
-    empty_digestor(ctx, recipe.waste_valve)
-    logger.info("步骤 5 完成：消解器已排空")
+    recipe = TEST_CONFIG.recipe
+    logger.info("=== 消解 - 吸水到消解器 ===")
+    logger.info("液源: %s (%s)", VALVE_LABELS.get(recipe.sample_source, recipe.sample_source), recipe.sample_source)
 
-    wait_enter("步骤 6：关闭所有液路阀。")
+    wait_enter("准备将液体加入消解器。")
     close_all_flow_valves(ctx)
-    logger.info("Flow 测试完成")
+    try:
+        add_to_digestor(ctx, recipe.sample_source, "large")
+        logger.info("液体已加入消解器")
+    except RecipeError as exc:
+        logger.warning("加液失败: %s", exc)
+    finally:
+        close_all_flow_valves(ctx)
+
+
+def test_digest_pull(ctx: HardwareContext) -> None:
+    """从消解器回抽到计量单元。"""
+
+    logger.info("=== 消解 - 从消解器回抽 ===")
+
+    wait_enter("准备从消解器回抽液体。")
+    close_all_flow_valves(ctx)
+    try:
+        pull_digestor_to_meter(ctx)
+        logger.info("回抽完成")
+    except RecipeError as exc:
+        logger.warning("回抽失败: %s", exc)
+    finally:
+        close_all_flow_valves(ctx)
 
 
 def _temperature_printer(
@@ -630,32 +484,35 @@ def _temperature_printer(
         stop_event.wait(interval_s)
 
 
-def test_heat(ctx: HardwareContext, target_temp_c: float = 50.0, print_interval_s: float = 3.0) -> None:
-    """加热测试。"""
+def test_heat_short(ctx: HardwareContext) -> None:
+    """加热 30 秒。"""
 
     recipe = TEST_CONFIG.recipe
-    logger.info("=== 加热测试 ===")
+    logger.info("=== 消解 - 加热 30 秒 ===")
 
     wait_enter("步骤 1：关闭所有液路阀。")
     close_all_flow_valves(ctx)
 
-    wait_enter("步骤 2：用清洗液支路润洗并排到废液。")
-    rinse_to_waste(ctx, recipe.clean_source, recipe.waste_valve)
+    wait_enter("步骤 2：将清洗液加入消解器。")
+    try:
+        add_to_digestor(ctx, recipe.clean_source, "large")
+        logger.info("测试液体已加入消解器")
+    except RecipeError as exc:
+        logger.warning("加液失败: %s", exc)
+        return
 
-    wait_enter("步骤 3：将清洗液加入消解器。")
-    add_to_digestor(ctx, recipe.clean_source, "large")
-    logger.info("步骤 3 完成：测试液体已加入消解器")
-
-    wait_enter(f"步骤 4：加热到 {target_temp_c:.1f} C，达到后立即停止。")
+    wait_enter("步骤 3：开始加热 30 秒。")
     stop_event = threading.Event()
     printer = threading.Thread(
         target=_temperature_printer,
-        args=(ctx, stop_event, print_interval_s),
+        args=(ctx, stop_event, 3.0),
         daemon=True,
     )
     printer.start()
     try:
-        heat_and_hold(ctx, target_temp_c=target_temp_c, hold_ms=0)
+        heat_and_hold(ctx, target_temp_c=recipe.digest_target_temp_c, hold_ms=30_000)
+    except RecipeError as exc:
+        logger.warning("加热异常: %s", exc)
     finally:
         stop_event.set()
         printer.join(timeout=2.0)
@@ -663,38 +520,106 @@ def test_heat(ctx: HardwareContext, target_temp_c: float = 50.0, print_interval_
     final_temp_c = ctx.temp_sensor.read_temperature_c()
     logger.info("最终温度 = %.2f C", final_temp_c)
 
-    wait_enter("步骤 5：排空消解器到废液。")
-    empty_digestor(ctx, recipe.waste_valve)
-    logger.info("加热测试完成")
+    wait_enter("步骤 4：排空消解器到废液。")
+    try:
+        empty_digestor(ctx, recipe.waste_valve)
+        logger.info("消解器已排空")
+    except RecipeError as exc:
+        logger.warning("排空失败: %s", exc)
 
+
+def test_heat_to_target(ctx: HardwareContext) -> None:
+    """加热到 50°C。"""
+
+    recipe = TEST_CONFIG.recipe
+    target_temp_c = 50.0
+    logger.info("=== 消解 - 加热到 %.1f°C ===", target_temp_c)
+
+    wait_enter("步骤 1：关闭所有液路阀。")
+    close_all_flow_valves(ctx)
+
+    wait_enter("步骤 2：将清洗液加入消解器。")
+    try:
+        add_to_digestor(ctx, recipe.clean_source, "large")
+        logger.info("测试液体已加入消解器")
+    except RecipeError as exc:
+        logger.warning("加液失败: %s", exc)
+        return
+
+    wait_enter(f"步骤 3：加热到 {target_temp_c:.1f}°C。")
+    stop_event = threading.Event()
+    printer = threading.Thread(
+        target=_temperature_printer,
+        args=(ctx, stop_event, 3.0),
+        daemon=True,
+    )
+    printer.start()
+    try:
+        heat_and_hold(ctx, target_temp_c=target_temp_c, hold_ms=0)
+    except RecipeError as exc:
+        logger.warning("加热异常: %s", exc)
+    finally:
+        stop_event.set()
+        printer.join(timeout=2.0)
+
+    final_temp_c = ctx.temp_sensor.read_temperature_c()
+    logger.info("最终温度 = %.2f C", final_temp_c)
+
+    wait_enter("步骤 4：排空消解器到废液。")
+    try:
+        empty_digestor(ctx, recipe.waste_valve)
+        logger.info("消解器已排空")
+    except RecipeError as exc:
+        logger.warning("排空失败: %s", exc)
+
+
+def test_digest_read(ctx: HardwareContext) -> None:
+    """读取 6 个电压，并按主流程算法打印结果。"""
+
+    logger.info("=== 消解 - 完整读数 ===")
+    signal = read_digest_signal(ctx)
+    absorbance = compute_absorbance(signal)
+    concentration = compute_concentration(signal)
+    logger.info("vbias_m = %.6f", signal.vbias_m)
+    logger.info("vbias_r = %.6f", signal.vbias_r)
+    logger.info("vm_0 = %.6f", signal.vm_0)
+    logger.info("vr_0 = %.6f", signal.vr_0)
+    logger.info("vm_s = %.6f", signal.vm_s)
+    logger.info("vr_s = %.6f", signal.vr_s)
+    logger.info("absorbance = %.6f", absorbance)
+    logger.info("concentration = %.6f", concentration)
+
+
+# ==================== 调度与安全收尾 ====================
 
 def run_test_by_name(ctx: HardwareContext, test_name: str) -> None:
     """按名称调度测试项。"""
 
-    if test_name == "ads":
-        test_ads1115(ctx)
-    elif test_name == "spi":
-        test_softspi(ctx)
-    elif test_name in {"max", "max31865"}:
-        test_max31865(ctx)
-    elif test_name == "valves":
-        test_tca9555_pins(ctx)
-    elif test_name == "valve_only":
-        test_valve_only(ctx)
-    elif test_name in {"control", "optics"}:
-        test_control_pins(ctx)
-    elif test_name == "force_dispense":
-        test_force_dispense(ctx)
-    elif test_name == "meter":
-        test_meter_unit(ctx)
-    elif test_name == "meter_debug":
-        test_meter_debug(ctx)
-    elif test_name == "pump":
-        test_pump(ctx, forward_s=5.0, reverse_s=5.0)
-    elif test_name == "flow":
-        test_flow(ctx)
-    elif test_name == "heat":
-        test_heat(ctx)
+    dispatch = {
+        "ads": test_ads1115,
+        "spi": test_softspi,
+        "max": test_max31865,
+        "valves": test_tca9555_pins,
+        "control": test_control_pins,
+        "valve_high": test_valve_high,
+        "valve_low": test_valve_low,
+        "meter_aspirate_manual": test_meter_aspirate_manual,
+        "force_dispense": test_force_dispense,
+        "meter_light_off": test_meter_light_off,
+        "meter_light_on": test_meter_light_on,
+        "meter_aspirate_small": test_meter_aspirate_small,
+        "meter_aspirate_large": test_meter_aspirate_large,
+        "digest_add": test_digest_add,
+        "digest_pull": test_digest_pull,
+        "heat_short": test_heat_short,
+        "heat_to_target": test_heat_to_target,
+        "digest_read": test_digest_read,
+    }
+    fn = dispatch.get(test_name)
+    if fn is None:
+        logger.warning("未知测试项: %s", test_name)
+        return
+    fn(ctx)
 
 
 def run_test_with_guard(ctx: HardwareContext, test_name: str, title: str) -> None:
@@ -751,9 +676,10 @@ def test() -> None:
             logger.info("开始执行：%s", title)
             if test_name == "all":
                 for _, batch_test_name, batch_title in TEST_ITEMS:
-                    if batch_test_name in {"all", "quit", "valve_only"}:
-                        if batch_test_name == "valve_only":
-                            logger.info("跳过液路阀单口测试，该项需要现场指定阀口")
+                    if batch_test_name in {"all", "quit"}:
+                        continue
+                    if batch_test_name in INTERACTIVE_TESTS:
+                        logger.info("跳过交互测试项：%s", batch_title)
                         continue
                     run_test_with_guard(ctx, batch_test_name, batch_title)
                 logger.info("全部自动测试项执行完成")
