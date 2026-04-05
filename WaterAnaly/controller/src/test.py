@@ -252,19 +252,17 @@ def test_tca9555_pins(ctx: HardwareContext) -> None:
 
 
 def test_control_pins(ctx: HardwareContext) -> None:
-    """逐个切换控制类引脚，覆盖 TcaConfig 里定义的全部 control_pins。"""
+    """逐个切换控制类引脚，覆盖 optics_controls 里的全部控制引脚。"""
 
-    control_pin_order = list(TEST_CONFIG.tca.control_pins.items())
     logger.info("=== 控制 IO 测试 ===")
-    for name, pin_number in control_pin_order:
-        pin = ctx.optics_controls[name]
+    for name, pin in ctx.optics_controls.items():
         label = CONTROL_LABELS.get(name, name)
-        wait_enter(f"准备拉高控制 pin {pin_number}: {label} ({name})。")
+        wait_enter(f"准备拉高控制 {label} ({name})。")
         pin.write(True)
-        logger.info("已拉高 pin %s: %s (%s)", pin_number, label, name)
-        wait_enter(f"准备拉低控制 pin {pin_number}: {label} ({name})。")
+        logger.info("已拉高 %s: %s", label, name)
+        wait_enter(f"准备拉低控制 {label} ({name})。")
         pin.write(False)
-        logger.info("已拉低 pin %s: %s (%s)", pin_number, label, name)
+        logger.info("已拉低 %s: %s", label, name)
 
 
 # ==================== 单阀测试 (6-7) ====================
@@ -598,16 +596,19 @@ def test_digest_read(ctx: HardwareContext) -> None:
 
     logger.info("=== 消解 - 完整读数 ===")
     signal = read_digest_signal(ctx)
-    absorbance = compute_absorbance(signal)
-    concentration = compute_concentration(signal)
     logger.info("vbias_m = %.6f", signal.vbias_m)
     logger.info("vbias_r = %.6f", signal.vbias_r)
     logger.info("vm_0 = %.6f", signal.vm_0)
     logger.info("vr_0 = %.6f", signal.vr_0)
     logger.info("vm_s = %.6f", signal.vm_s)
     logger.info("vr_s = %.6f", signal.vr_s)
-    logger.info("absorbance = %.6f", absorbance)
-    logger.info("concentration = %.6f", concentration)
+    try:
+        absorbance = compute_absorbance(signal)
+        concentration = compute_concentration(signal)
+        logger.info("absorbance = %.6f", absorbance)
+        logger.info("concentration = %.6f", concentration)
+    except (ValueError, ZeroDivisionError) as exc:
+        logger.warning("吸光度/浓度计算失败: %s（消解器可能无样品或光路未准备好）", exc)
 
 
 # ==================== 调度与安全收尾 ====================

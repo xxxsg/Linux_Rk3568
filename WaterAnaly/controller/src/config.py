@@ -100,10 +100,10 @@ class PumpConfig:
 
 @dataclass(frozen=True)
 class TemperatureConfig:
-    sclk_pin: tuple[str, int] = ("/dev/gpiochip3", 5)  # 软件 SPI 时钟引脚
-    mosi_pin: tuple[str, int] = ("/dev/gpiochip1", 0)  # 软件 SPI 主发从收引脚
-    miso_pin: tuple[str, int] = ("/dev/gpiochip3", 4)  # 软件 SPI 主收从发引脚
-    cs_pin: tuple[str, int] = ("/dev/gpiochip3", 3)  # MAX31865 片选引脚
+    sclk_pin: tuple[str, int] = ("/dev/gpiochip3", 5)  # 软件 SPI 时钟引脚 gpio2
+    mosi_pin: tuple[str, int] = ("/dev/gpiochip1", 0)  # 软件 SPI 主发从收引脚 gpio3
+    miso_pin: tuple[str, int] = ("/dev/gpiochip3", 4)  # 软件 SPI 主收从发引脚 gpio4
+    cs_pin: tuple[str, int] = ("/dev/gpiochip3", 3)  # MAX31865 片选引脚 gpio5
     rref: float = 430.0  # MAX31865 参考电阻阻值
     r0: float = 100.0  # PT100 在 0 摄氏度时的标称阻值
     wires: int = 2  # RTD 接线方式
