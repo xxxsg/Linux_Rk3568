@@ -399,6 +399,7 @@ def test_meter_light_off(ctx: HardwareContext) -> None:
     ctx.optics_controls["meter_up"].write(False)
     ctx.optics_controls["meter_down"].write(False)
     capture_meter_voltages("关灯电压：", ctx)
+    wait_enter("关灯电压已读取")
 
 
 def test_meter_light_on(ctx: HardwareContext) -> None:
@@ -410,6 +411,7 @@ def test_meter_light_on(ctx: HardwareContext) -> None:
     capture_meter_voltages("开灯电压：", ctx)
     ctx.optics_controls["meter_up"].write(False)
     ctx.optics_controls["meter_down"].write(False)
+    wait_enter("开灯电压已读取")
 
 
 def test_meter_aspirate_small(ctx: HardwareContext) -> None:
@@ -607,6 +609,7 @@ def test_digest_read(ctx: HardwareContext) -> None:
         logger.info("concentration = %.6f", concentration)
     except (ValueError, ZeroDivisionError) as exc:
         logger.warning("吸光度/浓度计算失败: %s（消解器可能无样品或光路未准备好）", exc)
+    wait_enter("读数已完毕")
 
 
 # ==================== 调度与安全收尾 ====================
