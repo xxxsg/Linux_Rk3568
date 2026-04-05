@@ -146,13 +146,33 @@ def read_meter_voltages(
     return readings
 
 
+def _trimmed_mean(values: list[float]) -> float:
+    """去最大最小后求平均。"""
+
+    if len(values) <= 2:
+        return sum(values) / len(values)
+    sorted_vals = sorted(values)
+    return sum(sorted_vals[1:-1]) / (len(sorted_vals) - 2)
+
+
 def capture_meter_voltages(title: str, ctx: HardwareContext) -> list[tuple[float, float]]:
-    """打印计量单元 5 次原始电压，并返回全部读数。"""
+    """打印计量单元 5 次原始电压（上下分开），并返回全部读数。"""
 
     readings = read_meter_voltages(ctx)
+    upper_vals = [r[0] for r in readings]
+    lower_vals = [r[1] for r in readings]
+
     logger.info("%s", title)
-    for index, (upper_mv, lower_mv) in enumerate(readings, start=1):
-        logger.info("第 %s 次: 上液位 = %.3f mV, 下液位 = %.3f mV", index, upper_mv, lower_mv)
+    logger.info("--- 上液位 ---")
+    for index, mv in enumerate(upper_vals, start=1):
+        logger.info("第 %s 次: %.3f mV", index, mv)
+    logger.info("去最大最小平均: %.3f mV", _trimmed_mean(upper_vals))
+
+    logger.info("--- 下液位 ---")
+    for index, mv in enumerate(lower_vals, start=1):
+        logger.info("第 %s 次: %.3f mV", index, mv)
+    logger.info("去最大最小平均: %.3f mV", _trimmed_mean(lower_vals))
+
     return readings
 
 
