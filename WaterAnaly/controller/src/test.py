@@ -443,26 +443,34 @@ def _aspirate_with_ratio(ctx, volume, timeout_ms):
     worker = start_pump_in_background(ctx.pump.aspirate_continuous)
     threshold_pct = TEST_CONFIG.thresholds.voltage_change_percent
     deadline = time.monotonic() + timeout_ms / 1000.0
+    print_interval = 0.5  # 打印间隔
+    next_print = time.monotonic()
 
     try:
         while time.monotonic() < deadline:
             upper_mv = ctx.meter_optics.read_upper_mv()
             lower_mv = ctx.meter_optics.read_lower_mv()
+            now = time.monotonic()
+
             if volume == "large":
                 upper_ratio = upper_mv / upper_base if upper_base != 0 else 0
                 upper_rise = (upper_mv - upper_base) / upper_base * 100 if upper_base != 0 else 0
-                logger.info("上液位 = %.3f mV (比值 %.4f, 上升 %.2f%%)", upper_mv, upper_ratio, upper_rise)
+                if now >= next_print:
+                    logger.info("上液位 = %.3f mV (比值 %.4f, 上升 %.2f%%)", upper_mv, upper_ratio, upper_rise)
+                    next_print = now + print_interval
                 if upper_rise >= threshold_pct:
                     logger.info("检测到液位到位（上液位上升 %.2f%%），停止吸水", upper_rise)
                     return True
             else:
                 lower_ratio = lower_mv / lower_base if lower_base != 0 else 0
                 lower_rise = (lower_mv - lower_base) / lower_base * 100 if lower_base != 0 else 0
-                logger.info("下液位 = %.3f mV (比值 %.4f, 上升 %.2f%%)", lower_mv, lower_ratio, lower_rise)
+                if now >= next_print:
+                    logger.info("下液位 = %.3f mV (比值 %.4f, 上升 %.2f%%)", lower_mv, lower_ratio, lower_rise)
+                    next_print = now + print_interval
                 if lower_rise >= threshold_pct:
                     logger.info("检测到液位到位（下液位上升 %.2f%%），停止吸水", lower_rise)
                     return True
-            time.sleep(0.5)
+            time.sleep(0.05)
     finally:
         ctx.pump.stop()
         worker.join(timeout=2.0)
