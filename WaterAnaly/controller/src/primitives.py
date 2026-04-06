@@ -84,7 +84,7 @@ def is_meter_full(ctx: HardwareContext, volume: str, baseline_mv: float | None =
     """判断计量单元是否达到目标液位。
     
     baseline_mv 为吸液前读取的固定基准电压，若不传则实时读取。
-    当电压下降百分比超过阈值时判定到位。
+    当电压上升百分比超过阈值时判定到位。
     """
     thresholds = DEFAULT_CONFIG.thresholds
     change_pct = thresholds.voltage_change_percent / 100.0  # 转换为小数
@@ -93,15 +93,15 @@ def is_meter_full(ctx: HardwareContext, volume: str, baseline_mv: float | None =
         baseline = baseline_mv if baseline_mv is not None else ctx.meter_optics.read_upper_mv()
         if baseline == 0:
             return False  # 避免除零
-        target_mv = baseline * (1 - change_pct)  # 电压下降到该值视为到位
-        return stable_truth(lambda: ctx.meter_optics.read_upper_mv() <= target_mv)
+        target_mv = baseline * (1 + change_pct)  # 电压上升到该值视为到位
+        return stable_truth(lambda: ctx.meter_optics.read_upper_mv() >= target_mv)
     
     if volume == "small":
         baseline = baseline_mv if baseline_mv is not None else ctx.meter_optics.read_lower_mv()
         if baseline == 0:
             return False  # 避免除零
-        target_mv = baseline * (1 - change_pct)  # 电压下降到该值视为到位
-        return stable_truth(lambda: ctx.meter_optics.read_lower_mv() <= target_mv)
+        target_mv = baseline * (1 + change_pct)  # 电压上升到该值视为到位
+        return stable_truth(lambda: ctx.meter_optics.read_lower_mv() >= target_mv)
     
     raise ValueError(f"unsupported volume: {volume}")
 
@@ -109,8 +109,8 @@ def is_meter_full(ctx: HardwareContext, volume: str, baseline_mv: float | None =
 def is_meter_empty(ctx: HardwareContext, baseline_mv: float | None = None) -> bool:
     """判断计量单元是否已经排空。
     
-    baseline_mv 为排液前读取的固定基准电压，若不传则实时读取。
-    当电压回升百分比超过阈值时判定排空。
+    baseline_mv 为排液前读取的固定基准电压（有液状态），若不传则实时读取。
+    当电压下降百分比超过阈值时判定排空。
     """
     thresholds = DEFAULT_CONFIG.thresholds
     change_pct = thresholds.voltage_change_percent / 100.0  # 转换为小数
@@ -118,8 +118,8 @@ def is_meter_empty(ctx: HardwareContext, baseline_mv: float | None = None) -> bo
     baseline = baseline_mv if baseline_mv is not None else ctx.meter_optics.read_upper_mv()
     if baseline == 0:
         return False  # 避免除零
-    target_mv = baseline * (1 + change_pct)  # 电压回升到该值视为排空
-    return stable_truth(lambda: ctx.meter_optics.read_upper_mv() >= target_mv)
+    target_mv = baseline * (1 - change_pct)  # 电压下降到该值视为排空
+    return stable_truth(lambda: ctx.meter_optics.read_upper_mv() <= target_mv)
 
 
 # ==================== 液路路由元语层 ====================
