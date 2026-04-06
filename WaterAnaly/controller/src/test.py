@@ -23,15 +23,17 @@ from main import compute_absorbance, compute_concentration
 from primitives import (
     RecipeError,
     add_to_digestor,
-    aspirate,
     close_all_valves,
     empty_digestor,
     heat_and_hold,
+    is_meter_full,
+    is_meter_empty,
     pull_digestor_to_meter,
     read_digest_signal,
     route_meter_to_targets,
     route_source_to_meter,
     start_pump_in_background,
+    wait_until,
 )
 
 
@@ -429,6 +431,40 @@ def test_meter_light_on(ctx: HardwareContext) -> None:
     wait_enter("开灯电压已读取")
 
 
+def _aspirate_with_ratio(ctx, volume, timeout_ms):
+    """吸水并持续打印电压比值，到位或超时自动停止。"""
+
+    # 1. 读取基准电压（空管开灯状态）
+    upper_base = ctx.meter_optics.read_upper_mv()
+    lower_base = ctx.meter_optics.read_lower_mv()
+    logger.info("基准电压: 上液位 = %.3f mV, 下液位 = %.3f mV", upper_base, lower_base)
+
+    # 2. 启动泵
+    worker = start_pump_in_background(ctx.pump.aspirate_continuous)
+    thresholds = TEST_CONFIG.thresholds
+    full_mv = thresholds.upper_full_mv if volume == "large" else thresholds.lower_full_mv
+    deadline = time.monotonic() + timeout_ms / 1000.0
+
+    try:
+        while time.monotonic() < deadline:
+            upper_mv = ctx.meter_optics.read_upper_mv()
+            lower_mv = ctx.meter_optics.read_lower_mv()
+            upper_ratio = upper_mv / upper_base if upper_base != 0 else 0
+            lower_ratio = lower_mv / lower_base if lower_base != 0 else 0
+            logger.info("上液位 = %.3f mV (比值 %.4f), 下液位 = %.3f mV (比值 %.4f)",
+                        upper_mv, upper_ratio, lower_mv, lower_ratio)
+            if upper_mv <= full_mv and lower_mv <= full_mv:
+                logger.info("检测到液位到位，停止吸水")
+                return True
+            time.sleep(0.5)
+    finally:
+        ctx.pump.stop()
+        worker.join(timeout=2.0)
+
+    logger.warning("吸水超时（%ds），未检测到计量单元到位", timeout_ms // 1000)
+    return False
+
+
 def test_meter_aspirate_small(ctx: HardwareContext) -> None:
     """少量吸水到计量单元，验证到位自动停止。"""
 
@@ -438,13 +474,20 @@ def test_meter_aspirate_small(ctx: HardwareContext) -> None:
 
     wait_enter("准备开始少量吸水测试。")
     close_all_flow_valves(ctx)
+    ctx.optics_controls["meter_up"].write(True)
+    ctx.optics_controls["meter_down"].write(True)
     try:
-        aspirate(ctx, recipe.sample_source, "small")
-        logger.info("少量吸水完成，已自动停止")
-    except RecipeError as exc:
-        logger.warning("吸水失败: %s", exc)
+        route_source_to_meter(ctx, recipe.sample_source)
+        ok = _aspirate_with_ratio(ctx, "small", 15_000)
     finally:
         close_all_flow_valves(ctx)
+        ctx.optics_controls["meter_up"].write(False)
+        ctx.optics_controls["meter_down"].write(False)
+
+    if ok:
+        logger.info("少量吸水完成")
+    else:
+        logger.warning("少量吸水超时")
 
 
 def test_meter_aspirate_large(ctx: HardwareContext) -> None:
@@ -456,13 +499,20 @@ def test_meter_aspirate_large(ctx: HardwareContext) -> None:
 
     wait_enter("准备开始大量吸水测试。")
     close_all_flow_valves(ctx)
+    ctx.optics_controls["meter_up"].write(True)
+    ctx.optics_controls["meter_down"].write(True)
     try:
-        aspirate(ctx, recipe.sample_source, "large")
-        logger.info("大量吸水完成，已自动停止")
-    except RecipeError as exc:
-        logger.warning("吸水失败: %s", exc)
+        route_source_to_meter(ctx, recipe.sample_source)
+        ok = _aspirate_with_ratio(ctx, "large", 15_000)
     finally:
         close_all_flow_valves(ctx)
+        ctx.optics_controls["meter_up"].write(False)
+        ctx.optics_controls["meter_down"].write(False)
+
+    if ok:
+        logger.info("大量吸水完成")
+    else:
+        logger.warning("大量吸水超时")
 
 
 # ==================== 消解器测试 (21-25) ====================
