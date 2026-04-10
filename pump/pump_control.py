@@ -8,9 +8,9 @@ import sys
 CHIP_PUL_ENA_NAME = "gpiochip1"  # PUL 和 ENA 所在的芯片名称
 CHIP_DIR_NAME     = "gpiochip3"  # DIR 所在的芯片名称
 
-LINE_PUL = 1  # PUL 接 chip1 的 1 号引脚 -> 控制转速
-LINE_DIR = 5  # DIR 接 chip3 的 5 号引脚 -> 控制转向
-LINE_ENA = 0  # ENA 接 chip1 的 0 号引脚 -> 控制启停
+LINE_PUL = 1  # PUL 接 chip1 的 1 号引脚 -> 控制转速 #1
+LINE_DIR = 5  # DIR 接 chip3 的 5 号引脚 -> 控制转向 #2 
+LINE_ENA = 0  # ENA 接 chip1 的 0 号引脚 -> 控制启停 #3
 
 # 电机参数设置
 SUBDIVISION = 800       # 驱动器拨码开关设置的细分 (脉冲/转)

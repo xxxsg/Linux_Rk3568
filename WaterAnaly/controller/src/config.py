@@ -39,9 +39,7 @@ class TimingConfig:
 
 @dataclass(frozen=True)
 class ThresholdConfig:
-    upper_full_mv: float = 1200.0  # 上液位光电阈值，低于该值视为大体积到位
-    lower_full_mv: float = 1200.0  # 下液位光电阈值，低于该值视为小体积到位
-    empty_mv: float = 2200.0  # 排空阈值，高于该值视为计量单元已空
+    voltage_change_percent: float = 3.0  # 电压变化百分比阈值，超过该值视为液位到位/排空
 
 
 @dataclass(frozen=True)
@@ -94,16 +92,16 @@ class PumpConfig:
     
     pulse_pin: tuple[str, int] = ("/dev/gpiochip1", 1)  # 步进脉冲输出引脚
     steps_per_rev: int = 800  # 电机每转对应的细分步数
-    rpm: int = 300  # 泵运行转速
+    rpm: int = 150  # 泵运行转速
     aspirate_direction: str = "forward"  # 吸液时对应的电机方向
 
 
 @dataclass(frozen=True)
 class TemperatureConfig:
-    sclk_pin: tuple[str, int] = ("/dev/gpiochip3", 5)  # 软件 SPI 时钟引脚
-    mosi_pin: tuple[str, int] = ("/dev/gpiochip1", 0)  # 软件 SPI 主发从收引脚
-    miso_pin: tuple[str, int] = ("/dev/gpiochip3", 4)  # 软件 SPI 主收从发引脚
-    cs_pin: tuple[str, int] = ("/dev/gpiochip3", 3)  # MAX31865 片选引脚
+    sclk_pin: tuple[str, int] = ("/dev/gpiochip3", 5)  # 软件 SPI 时钟引脚 gpio2
+    mosi_pin: tuple[str, int] = ("/dev/gpiochip1", 0)  # 软件 SPI 主发从收引脚 gpio3
+    miso_pin: tuple[str, int] = ("/dev/gpiochip3", 4)  # 软件 SPI 主收从发引脚 gpio4
+    cs_pin: tuple[str, int] = ("/dev/gpiochip3", 3)  # MAX31865 片选引脚 gpio5
     rref: float = 430.0  # MAX31865 参考电阻阻值
     r0: float = 100.0  # PT100 在 0 摄氏度时的标称阻值
     wires: int = 2  # RTD 接线方式
