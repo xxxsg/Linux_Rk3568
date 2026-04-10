@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "serial": {
+      "type": "stdio",
+      "command": ["python", "-m", "serial_mcp_server"]
+    }
+  }
+}
