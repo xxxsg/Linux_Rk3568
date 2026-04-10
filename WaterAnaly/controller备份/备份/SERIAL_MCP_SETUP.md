@@ -26,25 +26,26 @@
 ## 1. 实验配置 (Experiment Config)
 > 每次实验前更新此部分，AI 将读取此配置并自动执行。
 
-### orange pi4pro
-
-#### 1.1 连接参数
+### 1.1 连接参数
 - **Port**: `COM3`
 - **Baudrate**: `115200`
 - **Data Bits**: `8`
 - **Parity**: `None`
 - **Stop Bits**: `1`
+- **Line Ending**: `CRLF (\r\n)`
 
+### 1.2 通信协议
+- **帧格式**: `[Header][Length][Command][Data][Checksum]`
+- **Header**: `0xAA 0x55`
+- **Checksum**: `XOR Sum`
 
-### rk3568 
-
-#### 1.1 连接参数
-- **Port**: `COM10`
-- **Baudrate**: `1500000`
-- **Data Bits**: `8`
-- **Parity**: `None`
-- **Stop Bits**: `1`
-
+### 1.3 测试指令集
+| 步骤 | 描述 | 发送指令 (Hex/Text) | 预期响应 |
+|---|---|---|---|
+| 1 | 握手测试 | `AT` | `OK` |
+| 2 | 读取版本 | `VER?` | `v1.0.0` |
+| 3 | 启动采集 | `START` | `ACK` |
+| 4 | 停止采集 | `STOP` | `ACK` |
 
 ---
 
