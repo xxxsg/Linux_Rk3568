@@ -544,11 +544,47 @@ def test_digest_add(ctx: HardwareContext) -> None:
     wait_enter("准备将液体加入消解器。")
     close_all_flow_valves(ctx)
     try:
-        aspirate(ctx, recipe.sample_source, "large")
-        logger.info("计量单元已吸水，等待确认开阀...")
-        wait_enter("确认消解器三阀已开，按回车开始排液到消解器。")
-        dispense(ctx, list(recipe.digestor_valves))
-        logger.info("液体已加入消解器")
+        logger.info("步骤1：吸水到计量单元...")
+        route_source_to_meter(ctx, recipe.sample_source)
+        ctx.optics_controls["meter_up"].write(True)
+        ctx.optics_controls["meter_down"].write(True)
+        baseline = ctx.meter_optics.read_upper_mv()
+        worker = start_pump_in_background(ctx.pump.aspirate_continuous)
+        try:
+            ok = wait_until(lambda: is_meter_full(ctx, "large", baseline), 15_000, poll_ms=50)
+        finally:
+            ctx.pump.stop()
+            worker.join(timeout=2.0)
+            ctx.optics_controls["meter_up"].write(False)
+            ctx.optics_controls["meter_down"].write(False)
+
+        if not ok:
+            logger.warning("吸水超时")
+            return
+
+        logger.info("计量单元已吸水完成")
+
+        logger.info("步骤2：打开消解器三阀...")
+        close_all_valves(ctx)
+        ctx.valve.open(list(recipe.digestor_valves))
+        logger.info("消解器三阀已打开，等待确认开始排液...")
+        wait_enter("确认三阀已开，按回车开始排液。")
+
+        logger.info("步骤3：开始排液到消解器...")
+        route_meter_to_targets(ctx, list(recipe.digestor_valves))
+        baseline = ctx.meter_optics.read_upper_mv()
+        worker = start_pump_in_background(ctx.pump.dispense_continuous)
+        try:
+            ok = wait_until(lambda: is_meter_empty(ctx, baseline), 10_000, poll_ms=50)
+        finally:
+            ctx.pump.stop()
+            worker.join(timeout=2.0)
+
+        if ok:
+            logger.info("液体已加入消解器")
+        else:
+            logger.warning("排液超时")
+
     except RecipeError as exc:
         logger.warning("加液失败: %s", exc)
     finally:
