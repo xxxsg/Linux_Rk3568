@@ -6,7 +6,7 @@ import time
 from typing import Optional, Tuple
 
 from .pins import Pin
-
+ 
 
 class Stepper:
     """通过脉冲和方向引脚控制步进电机。
