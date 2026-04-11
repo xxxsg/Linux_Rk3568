@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Optional, Tuple
 
-from pins import Pin
+from .pins import Pin
 
 
 class Stepper:
