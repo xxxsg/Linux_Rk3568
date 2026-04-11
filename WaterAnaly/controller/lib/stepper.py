@@ -79,8 +79,8 @@ class Stepper:
         return period / 2.0, period / 2.0
 
     def _apply_direction(self, forward: bool) -> None:
-        """根据方向极性配置输出 DIR 电平。"""
-        self.dir_pin.write(forward if self.dir_high_forward else not forward)
+        """根据方向极性配置输出 DIR 电平（共阳极时取反）。"""
+        self.dir_pin.write(not (forward if self.dir_high_forward else not forward))
         self.forward = bool(forward)
 
     def _should_stop(self) -> bool:
@@ -121,12 +121,12 @@ class Stepper:
         self.steps_per_rev = self._check_pos_int(steps_per_rev, "steps_per_rev")
 
     def pulse_once(self) -> None:
-        """输出一个完整步进脉冲。"""
+        """输出一个完整步进脉冲（共阳极，低电平触发）。"""
         high_s, low_s = self._pulse_times()
-        self.pul_pin.high()
-        time.sleep(high_s)
         self.pul_pin.low()
         time.sleep(low_s)
+        self.pul_pin.high()
+        time.sleep(high_s)
 
     def move_steps(self, steps: int, direction: Optional[bool] = None) -> None:
         """按指定步数运行。
