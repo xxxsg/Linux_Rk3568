@@ -89,6 +89,7 @@ TEST_ITEMS = [
     ("23", "heat_short", "消解 - 加热 30 秒"),
     ("24", "heat_to_target", "消解 - 加热到 50°C"),
     ("25", "digest_read", "消解 - 完整读数"),
+    ("31", "digest_valves", "消解 - 测试三阀同时开"),
     ("0", "quit", "退出"),
 ]
 TEST_MENU = {menu_no: (test_name, title) for menu_no, test_name, title in TEST_ITEMS}
@@ -565,6 +566,25 @@ def test_digest_pull(ctx: HardwareContext) -> None:
         close_all_flow_valves(ctx)
 
 
+def test_digest_valves(ctx: HardwareContext) -> None:
+    """测试消解器三阀同时打开。"""
+
+    recipe = DEFAULT_CONFIG.recipe
+    logger.info("=== 消解 - 测试三阀同时开 ===")
+    logger.info("将同时打开: %s", list(recipe.digestor_valves))
+
+    wait_enter("准备测试三阀同时开。")
+    close_all_flow_valves(ctx)
+    try:
+        logger.info("打开三阀...")
+        ctx.valve.open(list(recipe.digestor_valves))
+        logger.info("三阀已打开，按回车关闭")
+        wait_enter("")
+    finally:
+        close_all_flow_valves(ctx)
+        logger.info("已关闭三阀")
+
+
 def _temperature_printer(
     ctx: HardwareContext,
     stop_event: threading.Event,
@@ -716,6 +736,7 @@ def run_test_by_name(ctx: HardwareContext, test_name: str) -> None:
         "heat_short": test_heat_short,
         "heat_to_target": test_heat_to_target,
         "digest_read": test_digest_read,
+        "digest_valves": test_digest_valves,
     }
     fn = dispatch.get(test_name)
     if fn is None:
