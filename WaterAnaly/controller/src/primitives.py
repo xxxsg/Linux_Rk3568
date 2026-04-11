@@ -176,10 +176,11 @@ def aspirate(ctx: HardwareContext, source_name: str, volume: str) -> None:
 
     流程：
     1. 切换到"液源 -> 计量单元"
-    2. 读取当前空管基准电压
-    3. 后台启动连续吸液
-    4. 轮询液位是否到达目标位置
-    5. 无论成功或失败，都停泵并关闭阀门
+    2. 开灯并等待光路稳定
+    3. 读取当前空管基准电压
+    4. 后台启动连续吸液
+    5. 轮询液位是否到达目标位置
+    6. 无论成功或失败，都停泵并关闭阀门
     """
 
     timeout_ms = (
@@ -189,7 +190,8 @@ def aspirate(ctx: HardwareContext, source_name: str, volume: str) -> None:
     )
 
     route_source_to_meter(ctx, source_name)
-    # 吸液前读取固定基准电压，避免轮询过程中基准漂移
+    ctx.meter_optics.light_on()
+    sleep_ms(DEFAULT_CONFIG.timing.optics_warmup_ms)
     if volume == "large":
         baseline = ctx.meter_optics.read_upper_mv()
     else:

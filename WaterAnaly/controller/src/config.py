@@ -33,13 +33,13 @@ class TimingConfig:
     heat_poll_ms: int = 500  # 加热阶段的温度轮询周期
     digest_settle_total_ms: int = 900_000  # 消解反应后的总静置时间
     stir_duration_ms: int = 15_000  # 通气搅拌动作持续时间
-    optics_warmup_ms: int = 2_000  # 光路切换后等待信号稳定的时间
+    optics_warmup_ms: int = 500  # 光路切换后等待信号稳定的时间
     clean_pause_ms: int = 20_000  # 清洗阶段每轮之间的额外停顿
 
 
 @dataclass(frozen=True)
 class ThresholdConfig:
-    voltage_change_percent: float = 3.0  # 电压变化百分比阈值，超过该值视为液位到位/排空
+    voltage_change_percent: float = 5.0  # 电压变化百分比阈值，超过该值视为液位到位/排空
 
 
 @dataclass(frozen=True)

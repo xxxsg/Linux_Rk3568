@@ -57,16 +57,33 @@ class ValveBank:
 class MeterOptics:
     """计量单元液位光电读取封装。"""
 
-    def __init__(self, ads: ADS1115, upper_channel: int, lower_channel: int) -> None:
+    def __init__(
+        self,
+        ads: ADS1115,
+        upper_channel: int,
+        lower_channel: int,
+        upper_control_pin: Tca9555Pin,
+        lower_control_pin: Tca9555Pin,
+    ) -> None:
         self._ads = ads
         self._upper_channel = upper_channel
         self._lower_channel = lower_channel
+        self._upper_pin = upper_control_pin
+        self._lower_pin = lower_control_pin
 
     def read_upper_mv(self) -> float:
         return float(self._ads.read_voltage(self._upper_channel))
 
     def read_lower_mv(self) -> float:
         return float(self._ads.read_voltage(self._lower_channel))
+
+    def light_on(self) -> None:
+        self._upper_pin.write(True)
+        self._lower_pin.write(True)
+
+    def light_off(self) -> None:
+        self._upper_pin.write(False)
+        self._lower_pin.write(False)
 
 
 class DigestOptics:
@@ -248,6 +265,8 @@ def init_hardware(config: AppConfig = DEFAULT_CONFIG) -> HardwareContext:
         ads1115,
         upper_channel=config.ads.meter_upper_channel,
         lower_channel=config.ads.meter_lower_channel,
+        upper_control_pin=optics_controls["meter_up"],
+        lower_control_pin=optics_controls["meter_down"],
     )
     digest_optics = DigestOptics(
         ads1115,
