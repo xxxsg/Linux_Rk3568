@@ -83,6 +83,7 @@ class TcaConfig:
             "digest_ref_amp": 0o5,   # 常闭接法，高电平断开
             "digest_main_amp": 0o6,  # 常闭接法，高电平断开
             "digest_heat": 0o7,      # 消解器加热控制
+            "max31865_cs": 0o10,     # MAX31865 片选
         }
     )  # 控制类执行器到 TCA9555 引脚号的映射
 

@@ -185,6 +185,11 @@ def init_hardware(config: AppConfig = DEFAULT_CONFIG) -> HardwareContext:
             "digest_heat": config.tca.control_pins["digest_heat"],
         },
     )
+    max31865_cs = Tca9555Pin(
+        control_io,
+        config.tca.control_pins["max31865_cs"],
+        initial_value=True,
+    )
 
     # 3. 构建泵驱动所需的步进电机控制对象。
     pul_pin = GpiodPin(
@@ -227,11 +232,7 @@ def init_hardware(config: AppConfig = DEFAULT_CONFIG) -> HardwareContext:
             consumer="recipe_max31865_miso",
             mode="input",
         ),
-        cs=GpiodPin(
-            config.temperature.cs_pin,
-            consumer="recipe_max31865_cs",
-            default_value=True,
-        ),
+        cs=max31865_cs,
     )
     max31865 = MAX31865(
         spi=spi,
