@@ -564,9 +564,12 @@ def test_digest_add(ctx: HardwareContext) -> None:
 
         logger.info("计量单元已吸水完成")
 
+        wait_enter("计量单元已吸水完成")
         logger.info("步骤2：打开消解器三阀...")
-        close_all_valves(ctx)
+        # close_all_valves(ctx)
         ctx.valve.open(list(recipe.digestor_valves))
+
+
         logger.info("消解器三阀已打开，等待确认开始排液...")
         wait_enter("确认三阀已开，按回车开始排液。")
 
