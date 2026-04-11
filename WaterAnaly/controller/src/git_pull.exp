@@ -1,0 +1,13 @@
+#!/usr/bin/expect -f
+
+set password "3"
+
+spawn git pull origin main
+
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    eof
+}
