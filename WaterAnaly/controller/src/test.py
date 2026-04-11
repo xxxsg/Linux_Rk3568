@@ -23,7 +23,9 @@ from main import compute_absorbance, compute_concentration
 from primitives import (
     RecipeError,
     add_to_digestor,
+    aspirate,
     close_all_valves,
+    dispense,
     empty_digestor,
     heat_and_hold,
     is_meter_full,
@@ -542,7 +544,10 @@ def test_digest_add(ctx: HardwareContext) -> None:
     wait_enter("准备将液体加入消解器。")
     close_all_flow_valves(ctx)
     try:
-        add_to_digestor(ctx, recipe.sample_source, "large")
+        aspirate(ctx, recipe.sample_source, "large")
+        logger.info("计量单元已吸水，等待确认开阀...")
+        wait_enter("确认消解器三阀已开，按回车开始排液到消解器。")
+        dispense(ctx, list(recipe.digestor_valves))
         logger.info("液体已加入消解器")
     except RecipeError as exc:
         logger.warning("加液失败: %s", exc)
