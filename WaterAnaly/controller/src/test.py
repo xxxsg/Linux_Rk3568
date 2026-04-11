@@ -611,17 +611,17 @@ def test_digest_pull(ctx: HardwareContext) -> None:
 
 
 def test_digest_valves(ctx: HardwareContext) -> None:
-    """测试消解器三阀同时打开。"""
+    """测试 route_meter_to_targets 打开消解器三阀。"""
 
     recipe = DEFAULT_CONFIG.recipe
-    logger.info("=== 消解 - 测试三阀同时开 ===")
-    logger.info("将同时打开: %s", list(recipe.digestor_valves))
+    logger.info("=== 消解 - 测试 route_meter_to_targets 三阀 ===")
+    logger.info("将打开: %s", list(recipe.digestor_valves))
 
-    wait_enter("准备测试三阀同时开。")
+    wait_enter("准备测试。")
     close_all_flow_valves(ctx)
     try:
-        logger.info("打开三阀...")
-        ctx.valve.open(list(recipe.digestor_valves))
+        logger.info("调用 route_meter_to_targets...")
+        route_meter_to_targets(ctx, list(recipe.digestor_valves))
         logger.info("三阀已打开，按回车关闭")
         wait_enter("")
     finally:
