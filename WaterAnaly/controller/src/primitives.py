@@ -138,9 +138,10 @@ def route_source_to_meter(ctx: HardwareContext, source_name: str) -> None:
 
 
 def route_meter_to_targets(ctx: HardwareContext, targets: list[str]) -> None:
-    """切换液路到“计量单元 -> 目标端”方向。"""
+    """切换液路到"计量单元 -> 目标端"方向。"""
 
     close_all_valves(ctx)
+    sleep_ms(DEFAULT_CONFIG.timing.valve_settle_ms)
     ctx.valve.open(targets)
     sleep_ms(DEFAULT_CONFIG.timing.valve_settle_ms)
 

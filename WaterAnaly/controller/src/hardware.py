@@ -50,7 +50,11 @@ class ValveBank:
 
     def open(self, names: list[str] | tuple[str, ...]) -> None:
         # 仅打开调用方明确指定的通路。
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug("ValveBank.open: targets=%s", names)
         for name in names:
+            logger.debug("ValveBank.open: writing True to %s", name)
             self._pins[name].write(True)
 
 
