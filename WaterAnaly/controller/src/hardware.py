@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import os
 import sys
+import time
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -19,6 +22,9 @@ from lib.pins import GpiodPin, Tca9555Pin
 from lib.pump import Pump
 from lib.stepper import Stepper
 
+if TYPE_CHECKING:
+    from lib.TCA9555 import TCA9555
+
 
 VALVE_PIN_ORDER = list(DEFAULT_CONFIG.tca.valve_pins.items())
 
@@ -34,28 +40,68 @@ OPTICS_CTRL_PIN_ORDER = [
 
 
 class ValveBank:
-    """液路阀门集合封装，负责统一开关阀动作。"""
+    """液路阀门集合封装，通过批量 I2C 写入优化阀门操作。"""
 
-    def __init__(self, pins: dict[str, Tca9555Pin]) -> None:
-        self._pins = pins
+    def __init__(
+        self,
+        tca: "TCA9555",
+        pin_map: dict[str, int],
+        i2c_settle_ms: int = 5,
+    ) -> None:
+        self._tca = tca
+        self._pin_map = pin_map
+        self._i2c_settle_ms = i2c_settle_ms
 
-    @property
-    def pins(self) -> dict[str, Tca9555Pin]:
-        return self._pins
+        self._pin_to_port: dict[str, int] = {}
+        self._pin_to_bit: dict[str, int] = {}
+        for name, pin_no in pin_map.items():
+            port = pin_no // 8
+            bit = pin_no % 8
+            self._pin_to_port[name] = port
+            self._pin_to_bit[name] = bit
+
+    def _get_current_output(self) -> int:
+        return self._tca.read_word(source="output")
+
+    def _calculate_port_values(self, pin_names: list[str], value: bool) -> tuple[int | None, int | None]:
+        port0_value = None
+        port1_value = None
+
+        current = self._get_current_output()
+
+        for name in pin_names:
+            port = self._pin_to_port[name]
+            bit = self._pin_to_bit[name]
+            if port == 0:
+                if value:
+                    port0_value = (port0_value if port0_value is not None else (current & 0xFF)) | (1 << bit)
+                else:
+                    port0_value = (port0_value if port0_value is not None else (current & 0xFF)) & ~(1 << bit)
+            else:
+                if value:
+                    port1_value = (port1_value if port1_value is not None else ((current >> 8) & 0xFF)) | (1 << bit)
+                else:
+                    port1_value = (port1_value if port1_value is not None else ((current >> 8) & 0xFF)) & ~(1 << bit)
+
+        return port0_value, port1_value
 
     def close_all(self) -> None:
-        # 安全默认态：所有液路阀门关闭。
-        for pin in self._pins.values():
-            pin.write(False)
+        self._tca.write_word(0)
+        time.sleep(self._i2c_settle_ms / 1000.0)
 
     def open(self, names: list[str] | tuple[str, ...]) -> None:
-        # 仅打开调用方明确指定的通路。
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.debug("ValveBank.open: targets=%s", names)
-        for name in names:
-            logger.debug("ValveBank.open: writing True to %s", name)
-            self._pins[name].write(True)
+        names = list(names)
+        port0_value, port1_value = self._calculate_port_values(names, True)
+
+        if port0_value is not None and port1_value is not None:
+            new_value = port0_value | (port1_value << 8)
+            self._tca.write_word(new_value)
+        elif port0_value is not None:
+            self._tca.write_port(0, port0_value)
+        elif port1_value is not None:
+            self._tca.write_port(1, port1_value)
+
+        time.sleep(self._i2c_settle_ms / 1000.0)
 
 
 class MeterOptics:
@@ -264,7 +310,7 @@ def init_hardware(config: AppConfig = DEFAULT_CONFIG) -> HardwareContext:
     )
 
     # 5. 构建流程层实际使用的高层硬件对象。
-    valve = ValveBank(valves)
+    valve = ValveBank(valve_io, config.tca.valve_pins)
     meter_optics = MeterOptics(
         ads1115,
         upper_channel=config.ads.meter_upper_channel,

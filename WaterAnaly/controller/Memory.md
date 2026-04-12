@@ -14,6 +14,15 @@
 
 ## 最近更新
 
+### 2026-04-12
+- 任务目标: 解决 TCA9555 I2C 频繁通信导致失效的问题
+- 当前进展: 已重构 ValveBank，实现批量写入；优化后 N 个阀操作只需 1 次 I2C
+- 决策及原因:
+  - 采用批量写入方案（write_word/write_port），而非简单加延迟
+  - 延迟分层：ValveBank 内部 i2c_settle_ms (5ms) 处理 I2C 硬件保护，primitives 层 valve_settle_ms (50ms) 处理液路物理稳定
+  - 保留 valves 字典用于 test.py 单独测试每个阀
+- 待解决问题: 暂无
+
 ### 2026-03-26
 - 任务目标: 补回并增强 `src/config.py`、`src/hardware.py`、`src/primitives.py` 的中文注释，同时清理日志配置中的冗余 `log_level`
 - 当前进展: 已完成三个文件的中文注释补充；`primitives.py` 已按元语层分类补充职责说明和函数清单；`config.py` 已删除 `log_level`，日志只由 `DEBUG` 控制
