@@ -130,9 +130,10 @@ def is_meter_empty(ctx: HardwareContext, baseline_mv: float | None = None) -> bo
 # - route_meter_to_targets()：建立“计量单元 -> 目标端”通路。
 # - route_digestor_to_meter()：建立“消解器 -> 计量单元”通路。
 def route_source_to_meter(ctx: HardwareContext, source_name: str) -> None:
-    """切换液路到“液源 -> 计量单元”方向。"""
+    """切换液路到"液源 -> 计量单元"方向。"""
 
     close_all_valves(ctx)
+    sleep_ms(DEFAULT_CONFIG.timing.valve_settle_ms)
     ctx.valve.open([source_name])
     sleep_ms(DEFAULT_CONFIG.timing.valve_settle_ms)
 
@@ -147,9 +148,10 @@ def route_meter_to_targets(ctx: HardwareContext, targets: list[str]) -> None:
 
 
 def route_digestor_to_meter(ctx: HardwareContext) -> None:
-    """切换液路到“消解器 -> 计量单元”方向。"""
+    """切换液路到"消解器 -> 计量单元"方向。"""
 
     close_all_valves(ctx)
+    sleep_ms(DEFAULT_CONFIG.timing.valve_settle_ms)
     ctx.valve.open(list(DEFAULT_CONFIG.recipe.digestor_valves))
     sleep_ms(DEFAULT_CONFIG.timing.valve_settle_ms)
 
