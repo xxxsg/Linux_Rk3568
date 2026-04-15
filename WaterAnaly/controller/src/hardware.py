@@ -28,16 +28,6 @@ if TYPE_CHECKING:
 
 VALVE_PIN_ORDER = list(DEFAULT_CONFIG.tca.valve_pins.items())
 
-# 光学与加热相关控制脚，保留固定顺序便于统一初始化和排查。
-OPTICS_CTRL_PIN_ORDER = [
-    ("meter_up", DEFAULT_CONFIG.tca.control_pins["meter_up"]),
-    ("meter_down", DEFAULT_CONFIG.tca.control_pins["meter_down"]),
-    ("digest_light", DEFAULT_CONFIG.tca.control_pins["digest_light"]),
-    ("digest_ref_amp", DEFAULT_CONFIG.tca.control_pins["digest_ref_amp"]),
-    ("digest_main_amp", DEFAULT_CONFIG.tca.control_pins["digest_main_amp"]),
-    ("digest_heat", DEFAULT_CONFIG.tca.control_pins["digest_heat"]),
-]
-
 
 class ValveBank:
     """液路阀门集合封装，通过批量 I2C 写入优化阀门操作。"""
@@ -403,12 +393,6 @@ def cleanup_hardware(ctx: HardwareContext | None) -> None:
         ctx.control_io.close()
     except Exception:
         pass
-
-
-def build_hardware(config: AppConfig | None = None) -> HardwareContext:
-    """对外暴露的硬件构建入口。"""
-
-    return init_hardware(DEFAULT_CONFIG if config is None else config)
 
 
 def safe_shutdown(ctx: HardwareContext | None) -> None:

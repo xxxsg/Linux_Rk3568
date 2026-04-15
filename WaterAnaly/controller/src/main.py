@@ -4,7 +4,7 @@ import logging
 import math
 
 from config import DEFAULT_CONFIG, configure_logging
-from hardware import build_hardware, safe_shutdown
+from hardware import init_hardware, safe_shutdown
 from primitives import (
     DigestSignal,
     add_to_digestor,
@@ -138,7 +138,7 @@ def main() -> None:
     ctx = None
     configure_logging(DEFAULT_CONFIG)
     try:
-        ctx = build_hardware(DEFAULT_CONFIG)
+        ctx = init_hardware(DEFAULT_CONFIG)
         result = run_water_analysis(
             ctx,
             a=DEFAULT_CONFIG.analysis.calibration_a,

@@ -17,7 +17,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
 from config import DEFAULT_CONFIG, configure_logging
-from hardware import HardwareContext, VALVE_PIN_ORDER, build_hardware, cleanup_hardware
+from hardware import HardwareContext, VALVE_PIN_ORDER, init_hardware, cleanup_hardware
 from lib.ADS1115 import ADS1115_REG_CONFIG_PGA_4_096V
 from main import compute_absorbance, compute_concentration
 from primitives import (
@@ -816,7 +816,7 @@ def run_test_with_guard(ctx: HardwareContext, test_name: str, title: str) -> Non
 def test() -> None:
     """测试入口。"""
 
-    ctx = build_hardware(TEST_CONFIG)
+    ctx = init_hardware(TEST_CONFIG)
     try:
         logger.info("硬件测试菜单已启动")
         while True:

@@ -150,8 +150,7 @@ class Stepper:
                     break
                 self.pulse_once()
         finally:
-            # 结束运动后的处理
-            pass
+            self.stop()
 
     def run_for_time(self, seconds: float, direction: Optional[bool] = None) -> None:
         """按指定时长运行。
@@ -176,8 +175,7 @@ class Stepper:
                     break
                 self.pulse_once()
         finally:
-            # 结束运动后的处理
-            pass
+            self.stop()
 
     def run_continuous(self, direction: Optional[bool] = None) -> None:
         """持续运行，直到收到停止请求。
@@ -197,8 +195,7 @@ class Stepper:
             while not self._should_stop():
                 self.pulse_once()
         finally:
-            # 结束运动后的处理
-            pass
+            self.stop()
 
     def stop(self) -> None:
         """停止运动。"""

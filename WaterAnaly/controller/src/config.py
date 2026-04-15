@@ -14,10 +14,6 @@ if PROJECT_ROOT not in sys.path:
 from lib.ADS1115 import ADS1115_REG_CONFIG_PGA_4_096V
 
 
-DIR_FORWARD = "FORWARD"
-DIR_REVERSE = "REVERSE"
-
-
 @dataclass(frozen=True)
 class TimingConfig:
     stable_sample_period_ms: int = 20  # 稳定判定时，两次采样之间的间隔
