@@ -11,7 +11,8 @@ PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
-from lib.ADS1115 import ADS1115_REG_CONFIG_PGA_4_096V
+from lib.ADS1115 import ADS1115_REG_CONFIG_PGA_4_096V, ADS1115_REG_CONFIG_PGA_6_144V
+
 
 
 @dataclass(frozen=True)
@@ -42,7 +43,7 @@ class ThresholdConfig:
 class AdsConfig:
     bus: int = 1  # ADS1115 所在 I2C 总线号
     addr: int = 0x48  # ADS1115 的 I2C 地址
-    gain: int = ADS1115_REG_CONFIG_PGA_4_096V  # ADS1115 满量程增益配置
+    gain: int = ADS1115_REG_CONFIG_PGA_6_144V  # ADS1115 满量程增益配置
     meter_upper_channel: int = 0  # 计量单元上液位检测通道
     meter_lower_channel: int = 1  # 计量单元下液位检测通道
     digest_measure_channel: int = 2  # 消解光学测量通道
@@ -89,7 +90,7 @@ class PumpConfig:
     
     pulse_pin: tuple[str, int] = ("/dev/gpiochip1", 1)  # 步进脉冲输出引脚
     steps_per_rev: int = 800  # 电机每转对应的细分步数
-    rpm: int = 150  # 泵运行转速
+    rpm: int = 50  # 泵运行转速
     aspirate_direction: str = "forward"  # 吸液时对应的电机方向
 
 
