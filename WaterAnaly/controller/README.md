@@ -24,6 +24,10 @@
 ## 已知问题但是暂不解决
 1. 打开电磁阀现在用循环，最好是计算用tca9555的write_word，ctx.valve.open(list(DEFAULT_CONFIG.recipe.digestor_valves))
 2. 计量单元液位判断依赖初始状态假设：吸水假设初始没水、排水假设初始有水。如果初始状态与假设相反，会导致判断失败。例如：已经有水的情况下再吸水，电压不会继续上升，永远等不到3%的变化。后续可通过流程控制（吸水前先确认没水）或使用绝对阈值判断初始状态来解决。
+3. 步进电机方向控制（DIR）支持两种接法：
+   - **共阳极接法**（低电平有效）：DIR 引脚拉低时电机响应，高电平无效。此模式下 `dir_high_forward=True`，代码中 `dir_pin.write(not forward)` 取反后再输出。
+   - **共阴极接法**（高电平有效）：DIR 引脚拉高时电机响应，低电平无效。此模式下 `dir_high_forward=False`，代码中 `dir_pin.write(not forward)` 取反后再输出。
+   - **当前生效的是共阴极接法**（`dir_high_forward=True`），对应高电平有效的驱动方案。
 
 ## 主流程说明
 
