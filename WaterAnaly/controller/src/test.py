@@ -18,7 +18,7 @@ if PROJECT_ROOT not in sys.path:
 
 from config import DEFAULT_CONFIG, configure_logging
 from hardware import HardwareContext, VALVE_PIN_ORDER, init_hardware, cleanup_hardware
-from lib.ADS1115 import ADS1115_REG_CONFIG_PGA_4_096V
+from lib.ADS1115 import ADS1115_REG_CONFIG_PGA_6_144V
 from main import compute_absorbance, compute_concentration
 from primitives import (
     RecipeError,
@@ -188,7 +188,7 @@ def capture_meter_voltages(title: str, ctx: HardwareContext) -> list[tuple[float
 def test_ads1115(ctx: HardwareContext) -> None:
     """读取 4 路 ADC 电压，确认 ADS1115 工作正常。"""
 
-    ctx.ads1115.set_gain(ADS1115_REG_CONFIG_PGA_4_096V)
+    ctx.ads1115.set_gain(ADS1115_REG_CONFIG_PGA_6_144V)
     logger.info("=== ADS1115 测试 ===")
     for channel in range(4):
         voltage_mv = ctx.ads1115.read_voltage(channel)
