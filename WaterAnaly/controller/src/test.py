@@ -35,7 +35,7 @@ from primitives import (
     route_meter_to_targets,
     route_source_to_meter,
     start_pump_in_background,
-    wait_until,
+    wait_until, 
 )
 
 
@@ -92,7 +92,7 @@ TEST_ITEMS = [
     ("23", "heat_short", "消解-加热30s"),
     ("24", "heat_to_target", "消解-加热50C"),
     ("25", "digest_read", "消解-读数"),
-    ("31", "digest_valves", "消解-三阀"),
+    ("31", "digest_valves", "消解-三阀共"),
     ("0", "quit", "退出"),
 ]
 TEST_MENU = {menu_no: (test_name, title) for menu_no, test_name, title in TEST_ITEMS}
