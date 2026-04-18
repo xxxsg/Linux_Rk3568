@@ -389,6 +389,7 @@ def test_meter_aspirate_manual(ctx: HardwareContext) -> None:
     prompt_optional("步骤 3：直接按回车开始吸液，输入 q 退出: ")
     worker = start_pump_in_background(ctx.pump.aspirate_continuous)
     stop_event = threading.Event()
+    start_time = time.monotonic()
 
     def print_loop():
         while not stop_event.is_set():
@@ -396,7 +397,9 @@ def test_meter_aspirate_manual(ctx: HardwareContext) -> None:
             lower_mv = ctx.meter_optics.read_lower_mv()
             upper_pct = (upper_mv - baseline_upper) / baseline_upper * 100 if baseline_upper != 0 else 0
             lower_pct = (lower_mv - baseline_lower) / baseline_lower * 100 if baseline_lower != 0 else 0
-            print(f"\r{lower_pct:.0f}% 上：{upper_pct:.0f}%", end="", flush=True)
+            elapsed = int(time.monotonic() - start_time)
+            m, s = divmod(elapsed, 60)
+            print(f"{m:02d}:{s:02d} 上：{upper_pct:.0f}%  下：{lower_pct:.0f}%")
             time.sleep(0.3)
 
     print_thread = threading.Thread(target=print_loop)
@@ -438,6 +441,7 @@ def test_force_dispense(ctx: HardwareContext) -> None:
     prompt_optional("步骤 3：直接按回车开始排液，输入 q 退出: ")
     worker = start_pump_in_background(ctx.pump.dispense_continuous)
     stop_event = threading.Event()
+    start_time = time.monotonic()
 
     def print_loop():
         while not stop_event.is_set():
@@ -445,7 +449,9 @@ def test_force_dispense(ctx: HardwareContext) -> None:
             lower_mv = ctx.meter_optics.read_lower_mv()
             upper_pct = (upper_mv - baseline_upper) / baseline_upper * 100 if baseline_upper != 0 else 0
             lower_pct = (lower_mv - baseline_lower) / baseline_lower * 100 if baseline_lower != 0 else 0
-            print(f"\r{lower_pct:.0f}% 上：{upper_pct:.0f}%", end="", flush=True)
+            elapsed = int(time.monotonic() - start_time)
+            m, s = divmod(elapsed, 60)
+            print(f"{m:02d}:{s:02d} 上：{upper_pct:.0f}%  下：{lower_pct:.0f}%")
             time.sleep(0.3)
 
     print_thread = threading.Thread(target=print_loop)
