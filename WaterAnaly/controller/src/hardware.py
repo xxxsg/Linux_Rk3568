@@ -264,9 +264,7 @@ def init_hardware(config: AppConfig = DEFAULT_CONFIG) -> HardwareContext:
         pul_pin=pul_pin,
         dir_pin=dir_pin,
         steps_per_rev=config.pump.steps_per_rev,
-    )
-    stepper.configure_driver(
-        dir_high_forward=True,
+        active_high=True,
     )
     stepper.set_rpm(config.pump.rpm)
 
