@@ -171,6 +171,14 @@ def configure_logging(config: AppConfig) -> logging.Logger:
     )
     root_logger.addHandler(handler)
     root_logger.setLevel(level)
+
+    meter_logger = logging.getLogger("meter")
+    meter_handler = logging.StreamHandler()
+    meter_handler.setFormatter(logging.Formatter(fmt="%(message)s"))
+    meter_logger.addHandler(meter_handler)
+    meter_logger.setLevel(logging.INFO)
+    meter_logger.propagate = False
+
     return root_logger
 
 

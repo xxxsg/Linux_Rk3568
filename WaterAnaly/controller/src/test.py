@@ -40,6 +40,7 @@ from primitives import (
 
 
 logger = logging.getLogger(__name__)
+meter_logger = logging.getLogger("meter")
 
 TEST_CONFIG = replace(
     DEFAULT_CONFIG,
@@ -72,26 +73,26 @@ CONTROL_LABELS = {
 }
 
 TEST_ITEMS = [
-    ("1", "ads", "ADS1115 四路电压读取"),
-    ("2", "spi", "SoftSPI 寄存器通信"),
-    ("3", "max", "MAX31865 温度采集"),
-    ("4", "valves", "TCA9555 全部 IO 测试"),
-    ("5", "control", "控制 IO 逐个测试"),
-    ("6", "valve_high", "液路阀单口设置为高电平"),
-    ("7", "valve_low", "液路阀单口设置为低电平"),
-    ("8", "meter_aspirate_manual", "吸液到计量单元（回车停止）"),
-    ("9", "force_dispense", "强制排液（回车停止）"),
-    ("10", "set_all_low_except_pul", "临时：除 PUL 外所有引脚置低"),
-    ("11", "meter_light_off", "计量单元 - 关灯测电压"),
-    ("12", "meter_light_on", "计量单元 - 开灯测电压"),
-    ("13", "meter_aspirate_small", "计量单元 - 吸水自动停止（少量）"),
-    ("14", "meter_aspirate_large", "计量单元 - 吸水自动停止（大量）"),
-    ("21", "digest_add", "消解 - 吸水到消解器"),
-    ("22", "digest_pull", "消解 - 从消解器回抽"),
-    ("23", "heat_short", "消解 - 加热 30 秒"),
-    ("24", "heat_to_target", "消解 - 加热到 50°C"),
-    ("25", "digest_read", "消解 - 完整读数"),
-    ("31", "digest_valves", "消解 - 测试三阀同时开"),
+    ("1", "ads", "ADS1115 ADC"),
+    ("2", "spi", "SoftSPI 通信"),
+    ("3", "max", "MAX31865 温度"),
+    ("4", "valves", "TCA9555 IO"),
+    ("5", "control", "控制IO"),
+    ("6", "valve_high", "阀置高"),
+    ("7", "valve_low", "阀置低"),
+    ("8", "meter_aspirate_manual", "吸液到计量"),
+    ("9", "force_dispense", "强制排液"),
+    ("10", "set_all_low_except_pul", "PUL外置低"),
+    ("11", "meter_light_off", "计量-关灯"),
+    ("12", "meter_light_on", "计量-开灯"),
+    ("13", "meter_aspirate_small", "计量-少量吸水"),
+    ("14", "meter_aspirate_large", "计量-大量吸水"),
+    ("21", "digest_add", "消解-吸水"),
+    ("22", "digest_pull", "消解-回抽"),
+    ("23", "heat_short", "消解-加热30s"),
+    ("24", "heat_to_target", "消解-加热50C"),
+    ("25", "digest_read", "消解-读数"),
+    ("31", "digest_valves", "消解-三阀"),
     ("0", "quit", "退出"),
 ]
 TEST_MENU = {menu_no: (test_name, title) for menu_no, test_name, title in TEST_ITEMS}
@@ -399,7 +400,7 @@ def test_meter_aspirate_manual(ctx: HardwareContext) -> None:
             lower_pct = (lower_mv - baseline_lower) / baseline_lower * 100 if baseline_lower != 0 else 0
             elapsed = int(time.monotonic() - start_time)
             m, s = divmod(elapsed, 60)
-            print(f"{m:02d}:{s:02d}  上：{upper_mv:>7.1f}mv{upper_pct:>4.0f}%    下：{lower_mv:>7.1f}mv{lower_pct:>4.0f}%")
+            meter_logger.info(f"{m:02d}:{s:02d}  上：{upper_mv:>7.1f}mv{upper_pct:>4.0f}%    下：{lower_mv:>7.1f}mv{lower_pct:>4.0f}%")
             time.sleep(0.3)
 
     print_thread = threading.Thread(target=print_loop)
@@ -451,7 +452,7 @@ def test_force_dispense(ctx: HardwareContext) -> None:
             lower_pct = (lower_mv - baseline_lower) / baseline_lower * 100 if baseline_lower != 0 else 0
             elapsed = int(time.monotonic() - start_time)
             m, s = divmod(elapsed, 60)
-            print(f"{m:02d}:{s:02d}  上：{upper_mv:>7.1f}mv{upper_pct:>4.0f}%    下：{lower_mv:>7.1f}mv{lower_pct:>4.0f}%")
+            meter_logger.info(f"{m:02d}:{s:02d}  上：{upper_mv:>7.1f}mv{upper_pct:>4.0f}%    下：{lower_mv:>7.1f}mv{lower_pct:>4.0f}%")
             time.sleep(0.3)
 
     print_thread = threading.Thread(target=print_loop)
