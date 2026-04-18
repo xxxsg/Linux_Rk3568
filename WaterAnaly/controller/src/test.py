@@ -358,6 +358,15 @@ def test_set_all_low_except_pul(ctx: HardwareContext) -> None:
 
 # ==================== 手动泵测试 (8-9) ====================
 
+def _measure_baseline(ctx: HardwareContext) -> tuple[float, float]:
+    """开灯后延迟测量基准电压，去除最大最小取平均。"""
+
+    time.sleep(0.5)
+    upper_vals = [ctx.meter_optics.read_upper_mv() for _ in range(5)]
+    lower_vals = [ctx.meter_optics.read_lower_mv() for _ in range(5)]
+    return _trimmed_mean(upper_vals), _trimmed_mean(lower_vals)
+
+
 def test_meter_aspirate_manual(ctx: HardwareContext) -> None:
     """从样品液源吸液到计量单元，回车停止。"""
 
@@ -374,35 +383,36 @@ def test_meter_aspirate_manual(ctx: HardwareContext) -> None:
 
     ctx.optics_controls["meter_up"].write(True)
     ctx.optics_controls["meter_down"].write(True)
-    baseline_upper = ctx.meter_optics.read_upper_mv()
-    baseline_lower = ctx.meter_optics.read_lower_mv()
+    baseline_upper, baseline_lower = _measure_baseline(ctx)
     logger.info("基准电压: 上液位 = %.3f mV, 下液位 = %.3f mV", baseline_upper, baseline_lower)
 
     prompt_optional("步骤 3：直接按回车开始吸液，输入 q 退出: ")
     worker = start_pump_in_background(ctx.pump.aspirate_continuous)
-    logger.info("吸液中，回车停止，输入 q 也会停止")
-    print_interval = 0.5
-    next_print = time.monotonic()
-    try:
-        while True:
+    stop_event = threading.Event()
+
+    def print_loop():
+        while not stop_event.is_set():
             upper_mv = ctx.meter_optics.read_upper_mv()
             lower_mv = ctx.meter_optics.read_lower_mv()
-            now = time.monotonic()
-            upper_ratio = upper_mv / baseline_upper if baseline_upper != 0 else 0
-            upper_rise = (upper_mv - baseline_upper) / baseline_upper * 100 if baseline_upper != 0 else 0
-            lower_ratio = lower_mv / baseline_lower if baseline_lower != 0 else 0
-            lower_rise = (lower_mv - baseline_lower) / baseline_lower * 100 if baseline_lower != 0 else 0
-            if now >= next_print:
-                logger.info("上液位 = %.3f mV (比值 %.4f, 上升 %.2f%%)", upper_mv, upper_ratio, upper_rise)
-                logger.info("下液位 = %.3f mV (比值 %.4f, 上升 %.2f%%)", lower_mv, lower_ratio, lower_rise)
-                next_print = now + print_interval
-            time.sleep(0.05)
+            upper_pct = (upper_mv - baseline_upper) / baseline_upper * 100 if baseline_upper != 0 else 0
+            lower_pct = (lower_mv - baseline_lower) / baseline_lower * 100 if baseline_lower != 0 else 0
+            print(f"\r{lower_pct:.0f}% 上：{upper_pct:.0f}%", end="", flush=True)
+            time.sleep(0.3)
+
+    print_thread = threading.Thread(target=print_loop)
+    print_thread.start()
+
+    try:
+        input("按回车停止\n")
     finally:
+        stop_event.set()
         ctx.pump.stop()
         worker.join(timeout=2.0)
+        print_thread.join()
         ctx.optics_controls["meter_up"].write(False)
         ctx.optics_controls["meter_down"].write(False)
         close_all_flow_valves(ctx)
+        print()
         logger.info("吸液已停止，液路阀已关闭")
 
 
@@ -422,35 +432,36 @@ def test_force_dispense(ctx: HardwareContext) -> None:
 
     ctx.optics_controls["meter_up"].write(True)
     ctx.optics_controls["meter_down"].write(True)
-    baseline_upper = ctx.meter_optics.read_upper_mv()
-    baseline_lower = ctx.meter_optics.read_lower_mv()
+    baseline_upper, baseline_lower = _measure_baseline(ctx)
     logger.info("基准电压: 上液位 = %.3f mV, 下液位 = %.3f mV", baseline_upper, baseline_lower)
 
     prompt_optional("步骤 3：直接按回车开始排液，输入 q 退出: ")
     worker = start_pump_in_background(ctx.pump.dispense_continuous)
-    logger.info("排液中，回车停止，输入 q 也会停止")
-    print_interval = 0.5
-    next_print = time.monotonic()
-    try:
-        while True:
+    stop_event = threading.Event()
+
+    def print_loop():
+        while not stop_event.is_set():
             upper_mv = ctx.meter_optics.read_upper_mv()
             lower_mv = ctx.meter_optics.read_lower_mv()
-            now = time.monotonic()
-            upper_ratio = upper_mv / baseline_upper if baseline_upper != 0 else 0
-            upper_rise = (upper_mv - baseline_upper) / baseline_upper * 100 if baseline_upper != 0 else 0
-            lower_ratio = lower_mv / baseline_lower if baseline_lower != 0 else 0
-            lower_rise = (lower_mv - baseline_lower) / baseline_lower * 100 if baseline_lower != 0 else 0
-            if now >= next_print:
-                logger.info("上液位 = %.3f mV (比值 %.4f, 变化 %.2f%%)", upper_mv, upper_ratio, upper_rise)
-                logger.info("下液位 = %.3f mV (比值 %.4f, 变化 %.2f%%)", lower_mv, lower_ratio, lower_rise)
-                next_print = now + print_interval
-            time.sleep(0.05)
+            upper_pct = (upper_mv - baseline_upper) / baseline_upper * 100 if baseline_upper != 0 else 0
+            lower_pct = (lower_mv - baseline_lower) / baseline_lower * 100 if baseline_lower != 0 else 0
+            print(f"\r{lower_pct:.0f}% 上：{upper_pct:.0f}%", end="", flush=True)
+            time.sleep(0.3)
+
+    print_thread = threading.Thread(target=print_loop)
+    print_thread.start()
+
+    try:
+        input("按回车停止\n")
     finally:
+        stop_event.set()
         ctx.pump.stop()
         worker.join(timeout=2.0)
+        print_thread.join()
         ctx.optics_controls["meter_up"].write(False)
         ctx.optics_controls["meter_down"].write(False)
         close_all_flow_valves(ctx)
+        print()
         logger.info("排液已停止，液路阀已关闭")
 
 
