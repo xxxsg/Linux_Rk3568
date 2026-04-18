@@ -399,7 +399,7 @@ def test_meter_aspirate_manual(ctx: HardwareContext) -> None:
             lower_pct = (lower_mv - baseline_lower) / baseline_lower * 100 if baseline_lower != 0 else 0
             elapsed = int(time.monotonic() - start_time)
             m, s = divmod(elapsed, 60)
-            print(f"{m:02d}:{s:02d} 上：{upper_pct:.0f}%  下：{lower_pct:.0f}%")
+            print(f"{m:02d}:{s:02d}  上：{upper_mv:>7.1f}mv{upper_pct:>4.0f}%    下：{lower_mv:>7.1f}mv{lower_pct:>4.0f}%")
             time.sleep(0.3)
 
     print_thread = threading.Thread(target=print_loop)
@@ -451,7 +451,7 @@ def test_force_dispense(ctx: HardwareContext) -> None:
             lower_pct = (lower_mv - baseline_lower) / baseline_lower * 100 if baseline_lower != 0 else 0
             elapsed = int(time.monotonic() - start_time)
             m, s = divmod(elapsed, 60)
-            print(f"{m:02d}:{s:02d} 上：{upper_pct:.0f}%  下：{lower_pct:.0f}%")
+            print(f"{m:02d}:{s:02d}  上：{upper_mv:>7.1f}mv{upper_pct:>4.0f}%    下：{lower_mv:>7.1f}mv{lower_pct:>4.0f}%")
             time.sleep(0.3)
 
     print_thread = threading.Thread(target=print_loop)
