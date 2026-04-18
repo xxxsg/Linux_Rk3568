@@ -372,14 +372,36 @@ def test_meter_aspirate_manual(ctx: HardwareContext) -> None:
     route_source_to_meter(ctx, recipe.sample_source)
     logger.info("已切换到吸液通路")
 
+    ctx.optics_controls["meter_up"].write(True)
+    ctx.optics_controls["meter_down"].write(True)
+    baseline_upper = ctx.meter_optics.read_upper_mv()
+    baseline_lower = ctx.meter_optics.read_lower_mv()
+    logger.info("基准电压: 上液位 = %.3f mV, 下液位 = %.3f mV", baseline_upper, baseline_lower)
+
     prompt_optional("步骤 3：直接按回车开始吸液，输入 q 退出: ")
     worker = start_pump_in_background(ctx.pump.aspirate_continuous)
     logger.info("吸液中，回车停止，输入 q 也会停止")
+    print_interval = 0.5
+    next_print = time.monotonic()
     try:
-        prompt_optional("")
+        while True:
+            upper_mv = ctx.meter_optics.read_upper_mv()
+            lower_mv = ctx.meter_optics.read_lower_mv()
+            now = time.monotonic()
+            upper_ratio = upper_mv / baseline_upper if baseline_upper != 0 else 0
+            upper_rise = (upper_mv - baseline_upper) / baseline_upper * 100 if baseline_upper != 0 else 0
+            lower_ratio = lower_mv / baseline_lower if baseline_lower != 0 else 0
+            lower_rise = (lower_mv - baseline_lower) / baseline_lower * 100 if baseline_lower != 0 else 0
+            if now >= next_print:
+                logger.info("上液位 = %.3f mV (比值 %.4f, 上升 %.2f%%)", upper_mv, upper_ratio, upper_rise)
+                logger.info("下液位 = %.3f mV (比值 %.4f, 上升 %.2f%%)", lower_mv, lower_ratio, lower_rise)
+                next_print = now + print_interval
+            time.sleep(0.05)
     finally:
         ctx.pump.stop()
         worker.join(timeout=2.0)
+        ctx.optics_controls["meter_up"].write(False)
+        ctx.optics_controls["meter_down"].write(False)
         close_all_flow_valves(ctx)
         logger.info("吸液已停止，液路阀已关闭")
 
@@ -398,14 +420,36 @@ def test_force_dispense(ctx: HardwareContext) -> None:
     route_meter_to_targets(ctx, [recipe.waste_valve])
     logger.info("已切换到排液通路")
 
+    ctx.optics_controls["meter_up"].write(True)
+    ctx.optics_controls["meter_down"].write(True)
+    baseline_upper = ctx.meter_optics.read_upper_mv()
+    baseline_lower = ctx.meter_optics.read_lower_mv()
+    logger.info("基准电压: 上液位 = %.3f mV, 下液位 = %.3f mV", baseline_upper, baseline_lower)
+
     prompt_optional("步骤 3：直接按回车开始排液，输入 q 退出: ")
     worker = start_pump_in_background(ctx.pump.dispense_continuous)
     logger.info("排液中，回车停止，输入 q 也会停止")
+    print_interval = 0.5
+    next_print = time.monotonic()
     try:
-        prompt_optional("")
+        while True:
+            upper_mv = ctx.meter_optics.read_upper_mv()
+            lower_mv = ctx.meter_optics.read_lower_mv()
+            now = time.monotonic()
+            upper_ratio = upper_mv / baseline_upper if baseline_upper != 0 else 0
+            upper_rise = (upper_mv - baseline_upper) / baseline_upper * 100 if baseline_upper != 0 else 0
+            lower_ratio = lower_mv / baseline_lower if baseline_lower != 0 else 0
+            lower_rise = (lower_mv - baseline_lower) / baseline_lower * 100 if baseline_lower != 0 else 0
+            if now >= next_print:
+                logger.info("上液位 = %.3f mV (比值 %.4f, 变化 %.2f%%)", upper_mv, upper_ratio, upper_rise)
+                logger.info("下液位 = %.3f mV (比值 %.4f, 变化 %.2f%%)", lower_mv, lower_ratio, lower_rise)
+                next_print = now + print_interval
+            time.sleep(0.05)
     finally:
         ctx.pump.stop()
         worker.join(timeout=2.0)
+        ctx.optics_controls["meter_up"].write(False)
+        ctx.optics_controls["meter_down"].write(False)
         close_all_flow_valves(ctx)
         logger.info("排液已停止，液路阀已关闭")
 
@@ -548,45 +592,72 @@ def test_digest_add(ctx: HardwareContext) -> None:
         route_source_to_meter(ctx, recipe.sample_source)
         ctx.optics_controls["meter_up"].write(True)
         ctx.optics_controls["meter_down"].write(True)
-        baseline = ctx.meter_optics.read_upper_mv()
+        baseline_upper = ctx.meter_optics.read_upper_mv()
+        baseline_lower = ctx.meter_optics.read_lower_mv()
+        logger.info("吸水基准电压: 上液位 = %.3f mV, 下液位 = %.3f mV", baseline_upper, baseline_lower)
         worker = start_pump_in_background(ctx.pump.aspirate_continuous)
+        print_interval = 0.5
+        next_print = time.monotonic()
         try:
-            ok = wait_until(lambda: is_meter_full(ctx, "large", baseline), 15_000, poll_ms=50)
+            while True:
+                upper_mv = ctx.meter_optics.read_upper_mv()
+                lower_mv = ctx.meter_optics.read_lower_mv()
+                now = time.monotonic()
+                upper_ratio = upper_mv / baseline_upper if baseline_upper != 0 else 0
+                upper_rise = (upper_mv - baseline_upper) / baseline_upper * 100 if baseline_upper != 0 else 0
+                lower_ratio = lower_mv / baseline_lower if baseline_lower != 0 else 0
+                lower_rise = (lower_mv - baseline_lower) / baseline_lower * 100 if baseline_lower != 0 else 0
+                if now >= next_print:
+                    logger.info("吸水-上液位 = %.3f mV (比值 %.4f, 上升 %.2f%%)", upper_mv, upper_ratio, upper_rise)
+                    logger.info("吸水-下液位 = %.3f mV (比值 %.4f, 上升 %.2f%%)", lower_mv, lower_ratio, lower_rise)
+                    next_print = now + print_interval
+                if is_meter_full(ctx, "large", baseline_upper):
+                    logger.info("检测到计量单元吸水到位，停止吸水")
+                    break
+                time.sleep(0.05)
         finally:
             ctx.pump.stop()
             worker.join(timeout=2.0)
             ctx.optics_controls["meter_up"].write(False)
             ctx.optics_controls["meter_down"].write(False)
 
-        if not ok:
-            logger.warning("吸水超时")
-            return
-
         logger.info("计量单元已吸水完成")
 
         wait_enter("计量单元已吸水完成")
-        # logger.info("步骤2：打开消解器三阀...")
-        # close_all_valves(ctx)
-        # ctx.valve.open(list(recipe.digestor_valves))
-
-
-        # logger.info("消解器三阀已打开，等待确认开始排液...")
-        # wait_enter("确认三阀已开，按回车开始排液。")
 
         logger.info("步骤3：开始排液到消解器...")
         route_meter_to_targets(ctx, list(recipe.digestor_valves))
-        baseline = ctx.meter_optics.read_upper_mv()
+        ctx.optics_controls["meter_up"].write(True)
+        ctx.optics_controls["meter_down"].write(True)
+        baseline_upper = ctx.meter_optics.read_upper_mv()
+        baseline_lower = ctx.meter_optics.read_lower_mv()
+        logger.info("排液基准电压: 上液位 = %.3f mV, 下液位 = %.3f mV", baseline_upper, baseline_lower)
         worker = start_pump_in_background(ctx.pump.dispense_continuous)
+        next_print = time.monotonic()
         try:
-            ok = wait_until(lambda: is_meter_empty(ctx, baseline), 10_000, poll_ms=50)
+            while True:
+                upper_mv = ctx.meter_optics.read_upper_mv()
+                lower_mv = ctx.meter_optics.read_lower_mv()
+                now = time.monotonic()
+                upper_ratio = upper_mv / baseline_upper if baseline_upper != 0 else 0
+                upper_rise = (upper_mv - baseline_upper) / baseline_upper * 100 if baseline_upper != 0 else 0
+                lower_ratio = lower_mv / baseline_lower if baseline_lower != 0 else 0
+                lower_rise = (lower_mv - baseline_lower) / baseline_lower * 100 if baseline_lower != 0 else 0
+                if now >= next_print:
+                    logger.info("排液-上液位 = %.3f mV (比值 %.4f, 下降 %.2f%%)", upper_mv, upper_ratio, upper_rise)
+                    logger.info("排液-下液位 = %.3f mV (比值 %.4f, 下降 %.2f%%)", lower_mv, lower_ratio, lower_rise)
+                    next_print = now + print_interval
+                if is_meter_empty(ctx, baseline_upper):
+                    logger.info("计量单元已排空，停止排液")
+                    break
+                time.sleep(0.05)
         finally:
             ctx.pump.stop()
             worker.join(timeout=2.0)
+            ctx.optics_controls["meter_up"].write(False)
+            ctx.optics_controls["meter_down"].write(False)
 
-        if ok:
-            logger.info("液体已加入消解器")
-        else:
-            logger.warning("排液超时")
+        logger.info("液体已加入消解器")
 
     except RecipeError as exc:
         logger.warning("加液失败: %s", exc)

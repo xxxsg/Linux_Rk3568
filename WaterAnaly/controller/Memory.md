@@ -14,7 +14,16 @@
 
 ## 最近更新
 
-### 2026-04-12
+### 2026-04-18
+- 任务目标: 重构步进电机驱动，用单一参数统一控制 PUL 和 DIR 极性
+- 当前进展: 已完成 stepper.py 重构，删除 dir_high_forward 参数，新增 active_high 参数同时控制 PUL 和 DIR
+- 决策及原因:
+  - 原来 PUL 和 DIR 的极性由不同参数控制（dir_high_forward），不合理
+  - 改为单一 `active_high` 参数：True=高电平有效（共阴极），False=低电平有效（共阳极）
+  - PUL: active_high=True 时先拉高触发，False 时先拉低触发
+  - DIR: active_high=True 时高电平正转，False 时低电平正转
+- 待解决问题: 暂无
+- 涉及文件: stepper.py, hardware.py, README.md
 - 任务目标: 解决 TCA9555 I2C 频繁通信导致失效的问题
 - 当前进展: 已重构 ValveBank，实现批量写入；优化后 N 个阀操作只需 1 次 I2C
 - 决策及原因:
